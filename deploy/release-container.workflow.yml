@@ -1,0 +1,123 @@
+# Move this file to .github/workflows/release-container.yml to enable it.
+name: Release Docker image
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build, publish and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Prepare image coordinates
+        id: prepare
+        shell: bash
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          echo "image=ghcr.io/${repository}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ steps.prepare.outputs.image }}
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Frameo
+            org.opencontainers.image.description=Private, lightweight photo and video management
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and publish multi-platform image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Package AMD64 image for offline installation
+        shell: bash
+        env:
+          IMAGE: ${{ steps.prepare.outputs.image }}:${{ github.ref_name }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          mkdir -p dist
+          docker pull --platform linux/amd64 "$IMAGE"
+          docker save "$IMAGE" | gzip -9 > "dist/frameo-${VERSION}-linux-amd64.tar.gz"
+
+      - name: Package lightweight Compose deployment
+        shell: bash
+        env:
+          IMAGE: ${{ steps.prepare.outputs.image }}:${{ github.ref_name }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          bundle="dist/frameo-${VERSION}-deploy"
+          mkdir -p "$bundle"
+          cp deploy/docker-compose.yml "$bundle/docker-compose.yml"
+          cp deploy/.env.example "$bundle/.env.example"
+          cp deploy/INSTALL.md "$bundle/INSTALL.md"
+          sed -i "s|^FRAMEO_IMAGE=.*|FRAMEO_IMAGE=${IMAGE}|" "$bundle/.env.example"
+          (
+            cd dist
+            zip -9 -r "frameo-${VERSION}-deploy.zip" "frameo-${VERSION}-deploy"
+          )
+          rm -rf "$bundle"
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
+
+      - name: Create GitHub release and upload assets
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
+        with:
+          name: Frameo ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/frameo-${{ github.ref_name }}-linux-amd64.tar.gz
+            dist/frameo-${{ github.ref_name }}-deploy.zip
+            dist/SHA256SUMS

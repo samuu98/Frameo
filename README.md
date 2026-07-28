@@ -37,6 +37,49 @@ Apri [http://localhost:3000](http://localhost:3000).
 I file originali e derivati restano nel volume `frameo_media`; il database è nel
 volume `frameo_postgres`.
 
+Il Compose locale applica un profilo prudente per computer poco potenti: un core
+per Frameo, mezzo core per PostgreSQL e limiti di memoria configurabili tramite
+variabili d'ambiente.
+
+## Release Docker
+
+Il workflow è conservato disattivato in
+`deploy/release-container.workflow.yml`, fuori dalla directory protetta di
+GitHub Actions. Questo permette di clonare e modificare il repository anche con
+credenziali senza scope `workflow`.
+
+Sul computer con i permessi GitHub corretti, attivalo e pubblicalo con:
+
+```bash
+mkdir -p .github/workflows
+git mv deploy/release-container.workflow.yml .github/workflows/release-container.yml
+git commit -m "Enable Docker release workflow"
+git push
+```
+
+Una volta attivato, il workflow viene eseguito quando viene pubblicato un tag
+semantico `vX.Y.Z`. La pipeline:
+
+- costruisce l'immagine per `linux/amd64` e `linux/arm64`;
+- pubblica i tag versione e `latest` su GitHub Container Registry;
+- crea automaticamente la GitHub Release;
+- allega l'immagine AMD64 compressa per installazioni offline;
+- allega un bundle Compose già configurato per hardware debole;
+- pubblica `SHA256SUMS` per verificare i download.
+
+Per creare una release:
+
+```bash
+git tag v0.1.0
+git push github v0.1.0
+```
+
+Il PC finale non deve compilare il progetto: può scaricare l'immagine da GHCR o
+caricare l'archivio Docker allegato alla release. L'immagine runtime contiene
+soltanto l'app standalone e gli strumenti Prisma necessari all'avvio, escludendo
+le dipendenze di sviluppo. Le istruzioni distribuite agli utenti sono in
+`deploy/INSTALL.md`.
+
 ## Sviluppo locale
 
 Prerequisiti: Node 24+, PostgreSQL e FFmpeg disponibili nel `PATH`.

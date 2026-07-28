@@ -1,17 +1,18 @@
+name: frameo
+
 services:
   frameo:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${FRAMEO_IMAGE:?Set FRAMEO_IMAGE in .env}
+    pull_policy: missing
     restart: unless-stopped
     cpus: ${FRAMEO_CPUS:-1.0}
     mem_limit: ${FRAMEO_MEMORY_LIMIT:-1024m}
     ports:
-      - "3000:3000"
+      - "${FRAMEO_PORT:-3000}:3000"
     environment:
-      DATABASE_URL: postgresql://frameo:frameo@postgres:5432/frameo?schema=public
+      DATABASE_URL: postgresql://frameo:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/frameo?schema=public
       STORAGE_ROOT: /app/storage
-      MAX_UPLOAD_BYTES: "5368709120"
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5368709120}
       DEMO_MODE: "false"
       NEXT_PUBLIC_APP_NAME: Frameo
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE_MB:-512}
@@ -22,10 +23,15 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
-      interval: 20s
+      interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   postgres:
     image: postgres:17-alpine
@@ -45,15 +51,21 @@ services:
     environment:
       POSTGRES_DB: frameo
       POSTGRES_USER: frameo
-      POSTGRES_PASSWORD: frameo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - frameo_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U frameo -d frameo"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   frameo_media:
   frameo_postgres:
+
