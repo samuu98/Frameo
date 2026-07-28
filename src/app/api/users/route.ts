@@ -48,6 +48,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ users: demoUsers, mode: "demo" });
   }
   try {
+    const userCount = await prisma.appUser.count();
+    if (userCount === 0) {
+      return NextResponse.json({ users: [], onboarding: true });
+    }
     await requireAdmin(request);
     const users = await prisma.appUser.findMany({
       include: { accessRules: { orderBy: { createdAt: "asc" } } },
@@ -74,7 +78,16 @@ export async function POST(request: Request) {
     }, { status: 201 });
   }
   try {
-    await requireAdmin(request);
+    const userCount = await prisma.appUser.count();
+    if (userCount === 0 && parsed.data.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Il primo utente deve essere un amministratore" },
+        { status: 409 }
+      );
+    }
+    if (userCount > 0) {
+      await requireAdmin(request);
+    }
     const user = await prisma.appUser.create({
       data: {
         ...parsed.data,

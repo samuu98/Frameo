@@ -35,7 +35,7 @@ export function OrganizeFilesModal({
   onClose: () => void;
   onComplete: (message: string) => void;
 }) {
-  const [personName, setPersonName] = useState(people[0] ?? "Sofia");
+  const [personName, setPersonName] = useState(people[0] ?? "");
   const [mode, setMode] = useState<"MOVE" | "COPY">("MOVE");
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [loading, setLoading] = useState(false);

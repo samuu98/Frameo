@@ -37,28 +37,18 @@ Apri [http://localhost:3000](http://localhost:3000).
 I file originali e derivati restano nel volume `frameo_media`; il database è nel
 volume `frameo_postgres`.
 
+Al primo avvio il database è vuoto: Frameo apre la pagina **Utenti & accessi**
+per creare il primo amministratore con nome ed email reali. I dati dimostrativi
+non vengono caricati a meno di impostare esplicitamente `FRAMEO_SEED_DEMO=true`.
+
 Il Compose locale applica un profilo prudente per computer poco potenti: un core
 per Frameo, mezzo core per PostgreSQL e limiti di memoria configurabili tramite
 variabili d'ambiente.
 
 ## Release Docker
 
-Il workflow è conservato disattivato in
-`deploy/release-container.workflow.yml`, fuori dalla directory protetta di
-GitHub Actions. Questo permette di clonare e modificare il repository anche con
-credenziali senza scope `workflow`.
-
-Sul computer con i permessi GitHub corretti, attivalo e pubblicalo con:
-
-```bash
-mkdir -p .github/workflows
-git mv deploy/release-container.workflow.yml .github/workflows/release-container.yml
-git commit -m "Enable Docker release workflow"
-git push
-```
-
-Una volta attivato, il workflow viene eseguito quando viene pubblicato un tag
-semantico `vX.Y.Z`. La pipeline:
+Il workflow in `.github/workflows/release-container.yml` viene eseguito quando
+viene pubblicato un tag semantico `vX.Y.Z`. La pipeline:
 
 - costruisce l'immagine per `linux/amd64` e `linux/arm64`;
 - pubblica i tag versione e `latest` su GitHub Container Registry;

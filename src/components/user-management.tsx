@@ -40,13 +40,6 @@ interface ManagedUser {
   accessRules: AccessRule[];
 }
 
-const demoUsers: ManagedUser[] = [
-  { id: "demo-admin", name: "Sara Porta", email: "admin@frameo.local", role: "ADMIN", active: true, lastSeenAt: new Date().toISOString(), accessRules: [] },
-  { id: "demo-curator", name: "Elena Riva", email: "elena@frameo.local", role: "CURATOR", active: true, lastSeenAt: new Date(Date.now() - 11 * 60_000).toISOString(), accessRules: [{ effect: "ALLOW", scope: "ALL", targetId: null, label: "Tutta la libreria" }] },
-  { id: "demo-viewer", name: "Luca Bianchi", email: "luca@frameo.local", role: "VIEWER", active: true, lastSeenAt: new Date(Date.now() - 4 * 86_400_000).toISOString(), accessRules: [{ effect: "ALLOW", scope: "PERSON", targetId: "sofia", label: "Media con Sofia" }, { effect: "DENY", scope: "TAG", targetId: "private", label: "Tag private" }] },
-  { id: "demo-guest", name: "Giulia Conti", email: "giulia@frameo.local", role: "VIEWER", active: false, lastSeenAt: null, accessRules: [] }
-];
-
 const roleLabel: Record<Role, string> = {
   ADMIN: "Amministratore",
   CURATOR: "Curatore",
@@ -153,16 +146,19 @@ function UserDrawer({
 }
 
 export function UserManagement() {
-  const [users, setUsers] = useState<ManagedUser[]>(demoUsers);
+  const [users, setUsers] = useState<ManagedUser[]>([]);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
+  const [onboarding, setOnboarding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetch("/api/users")
       .then((response) => response.ok ? response.json() : null)
-      .then((payload: { users?: ManagedUser[] } | null) => {
-        if (payload?.users?.length) setUsers(payload.users);
+      .then((payload: { users?: ManagedUser[]; onboarding?: boolean } | null) => {
+        if (Array.isArray(payload?.users)) setUsers(payload.users);
+        setOnboarding(payload?.onboarding === true);
       })
       .catch(() => undefined);
   }, []);
@@ -185,8 +181,8 @@ export function UserManagement() {
   return (
     <section className="user-management">
       <div className="management-hero">
-        <div><span><Shield size={15} /> AMMINISTRAZIONE</span><h2>Utenti & accessi</h2><p>Decidi con precisione chi vede, modifica o scarica ogni parte della libreria.</p></div>
-        <button onClick={() => setAdding(true)}><Plus size={17} /> Invita utente</button>
+        <div><span><Shield size={15} /> AMMINISTRAZIONE</span><h2>Utenti & accessi</h2><p>{onboarding ? "Crea il primo amministratore per iniziare a usare l’archivio." : "Decidi con precisione chi vede, modifica o scarica ogni parte della libreria."}</p></div>
+        <button onClick={() => { setError(null); setAdding(true); }}><Plus size={17} /> {onboarding ? "Crea amministratore" : "Invita utente"}</button>
       </div>
       <div className="access-overview">
         <div><span className="overview-icon purple"><UsersRound size={19} /></span><p><strong>{users.filter((user) => user.active).length}</strong><small>Utenti attivi</small></p></div>
@@ -209,6 +205,7 @@ export function UserManagement() {
             <span className="user-row-action"><MoreHorizontal size={17} /><ChevronRight size={15} /></span>
           </button>
         ))}
+        {!visible.length ? <div className="no-rules"><UserRound size={19} /><strong>Nessun utente configurato</strong><p>Crea il primo amministratore con il tuo nome e la tua email.</p></div> : null}
       </div>
       {selected ? <UserDrawer user={selected} onClose={() => setSelected(null)} onSave={saveUser} /> : null}
       {adding ? (
@@ -216,15 +213,31 @@ export function UserManagement() {
           <form className="simple-dialog" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => {
             event.preventDefault();
             const data = new FormData(event.currentTarget);
-            const user: ManagedUser = { id: `local-${Date.now()}`, name: String(data.get("name")), email: String(data.get("email")), role: String(data.get("role")) as Role, active: true, accessRules: [] };
-            setUsers((current) => [...current, user]);
-            setAdding(false);
-            void fetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(user) }).catch(() => undefined);
+            setError(null);
+            void fetch("/api/users", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: String(data.get("name")),
+                email: String(data.get("email")),
+                role: String(data.get("role")) as Role
+              })
+            })
+              .then(async (response) => {
+                const payload = await response.json() as { user?: ManagedUser; error?: string };
+                if (!response.ok || !payload.user) throw new Error(payload.error ?? "Creazione utente non riuscita");
+                setUsers((current) => [...current, payload.user as ManagedUser]);
+                setOnboarding(false);
+                setAdding(false);
+              })
+              .catch((cause) => setError(cause instanceof Error ? cause.message : "Creazione utente non riuscita"));
           }}>
             <header><span><UserRound size={18} /></span><div><h2>Invita una persona</h2><p>Potrai limitarne la visibilità subito dopo.</p></div><button type="button" onClick={() => setAdding(false)}><X size={18} /></button></header>
             <label>NOME<input name="name" required placeholder="Nome e cognome" /></label>
             <label>EMAIL<input name="email" type="email" required placeholder="nome@azienda.it" /></label>
-            <label>RUOLO<select name="role"><option value="VIEWER">Visualizzatore</option><option value="CURATOR">Curatore</option><option value="ADMIN">Amministratore</option></select></label>
+            <label>RUOLO<select name="role" defaultValue={onboarding ? "ADMIN" : "VIEWER"} disabled={onboarding}><option value="VIEWER">Visualizzatore</option><option value="CURATOR">Curatore</option><option value="ADMIN">Amministratore</option></select></label>
+            {onboarding ? <input type="hidden" name="role" value="ADMIN" /> : null}
+            {error ? <p role="alert">{error}</p> : null}
             <footer><button type="button" onClick={() => setAdding(false)}>Annulla</button><button type="submit">Invia invito</button></footer>
           </form>
         </div>

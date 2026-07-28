@@ -19,7 +19,6 @@ import {
   Folder,
   FolderInput,
   Grid2X2,
-  HardDrive,
   Heart,
   Image as ImageIcon,
   Inbox,
@@ -61,7 +60,7 @@ import {
   useRef,
   useState
 } from "react";
-import { demoMedia, people, quickTags } from "@/data/media";
+import { demoMedia } from "@/data/media";
 import {
   emptyAdvancedFilters,
   type AdvancedFilterState,
@@ -85,7 +84,7 @@ const navItems = [
   { label: "Libreria", icon: LayoutGrid },
   { label: "Recenti", icon: Clock3 },
   { label: "Preferiti", icon: Heart },
-  { label: "Da catalogare", icon: Inbox, count: 12 }
+  { label: "Da catalogare", icon: Inbox }
 ];
 
 const organizeItems = [
@@ -173,11 +172,17 @@ function Logo() {
 function Sidebar({
   active,
   onNavigate,
-  onUpload
+  onUpload,
+  people,
+  uncataloguedCount,
+  duplicateCount
 }: {
   active: string;
   onNavigate: (item: string) => void;
   onUpload: () => void;
+  people: string[];
+  uncataloguedCount: number;
+  duplicateCount: number;
 }) {
   return (
     <aside className="sidebar">
@@ -196,7 +201,7 @@ function Sidebar({
 
       <nav className="sidebar-nav" aria-label="Navigazione principale">
         <p className="nav-caption">Esplora</p>
-        {navItems.map(({ label, icon: Icon, count }) => (
+        {navItems.map(({ label, icon: Icon }) => (
           <button
             className={active === label ? "nav-item is-active" : "nav-item"}
             key={label}
@@ -204,7 +209,7 @@ function Sidebar({
           >
             <Icon size={18} />
             <span>{label}</span>
-            {count ? <em>{count}</em> : null}
+            {label === "Da catalogare" && uncataloguedCount ? <em>{uncataloguedCount}</em> : null}
           </button>
         ))}
 
@@ -229,12 +234,12 @@ function Sidebar({
           >
             <Icon size={18} />
             <span>{label}</span>
-            {label === "Duplicati" ? <em>2</em> : null}
+            {label === "Duplicati" && duplicateCount ? <em>{duplicateCount}</em> : null}
           </button>
         ))}
       </nav>
 
-      <div className="sidebar-people">
+      {people.length ? <div className="sidebar-people">
         <div className="sidebar-section-title">
           <span>Volti frequenti</span>
           <button aria-label="Vedi tutte le persone">
@@ -242,30 +247,14 @@ function Sidebar({
           </button>
         </div>
         <div className="avatar-stack">
-          {people.map((person) => (
-            <button key={person.name} title={`${person.name}, ${person.count} media`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={person.src} alt={person.name} />
+          {people.slice(0, 4).map((person) => (
+            <button key={person} title={person} aria-label={person}>
+              <span className="avatar-initials">{person.split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
             </button>
           ))}
-          <span>+18</span>
+          {people.length > 4 ? <span>+{people.length - 4}</span> : null}
         </div>
-      </div>
-
-      <div className="storage-card">
-        <div className="storage-head">
-          <span>
-            <HardDrive size={15} />
-            Archivio
-          </span>
-          <strong>68%</strong>
-        </div>
-        <div className="storage-track">
-          <span />
-        </div>
-        <p>2.72 TB di 4 TB utilizzati</p>
-        <button>Gestisci spazio</button>
-      </div>
+      </div> : null}
 
       <div className="sidebar-footer">
         <button>
@@ -275,14 +264,6 @@ function Sidebar({
         <button>
           <Settings size={17} />
           Impostazioni
-        </button>
-        <button className="profile-button" aria-label="Profilo di Sara Porta">
-          <span>SP</span>
-          <div>
-            <strong>Sara Porta</strong>
-            <small>Pro workspace</small>
-          </div>
-          <MoreHorizontal size={16} />
         </button>
       </div>
     </aside>
@@ -326,7 +307,10 @@ function Topbar({
   );
 }
 
-function StatusRail() {
+function StatusRail({ items }: { items: MediaItem[] }) {
+  const processing = items.filter((item) => item.status === "processing");
+  if (!processing.length) return null;
+
   return (
     <section className="status-rail" aria-label="Stato elaborazione">
       <div className="status-copy">
@@ -334,17 +318,10 @@ function StatusRail() {
           <LoaderCircle size={17} />
         </span>
         <div>
-          <strong>1 video in elaborazione</strong>
-          <p>Generazione anteprima HLS e 12 fotogrammi</p>
+          <strong>{processing.length} media in elaborazione</strong>
+          <p>{processing[0]?.title}</p>
         </div>
       </div>
-      <div className="status-progress">
-        <span style={{ width: "72%" }} />
-      </div>
-      <small>72%</small>
-      <button aria-label="Metti in pausa">
-        <Pause size={16} />
-      </button>
       <button aria-label="Apri coda">
         <ChevronRight size={17} />
       </button>
@@ -356,6 +333,7 @@ function MediaCard({
   item,
   selected,
   quickMode,
+  quickTags,
   onOpen,
   onSelect,
   onFavorite,
@@ -364,6 +342,7 @@ function MediaCard({
   item: MediaItem;
   selected: boolean;
   quickMode: boolean;
+  quickTags: Array<{ name: string; color: string }>;
   onOpen: (item: MediaItem) => void;
   onSelect: (item: MediaItem, event: MouseEvent) => void;
   onFavorite: (item: MediaItem, event: MouseEvent) => void;
@@ -461,10 +440,6 @@ function MediaCard({
           <div className="processing-overlay">
             <WandSparkles size={20} />
             <strong>Preparazione anteprima</strong>
-            <span>
-              <i style={{ width: "72%" }} />
-            </span>
-            <small>72%</small>
           </div>
         ) : null}
 
@@ -492,13 +467,11 @@ function MediaCard({
         </div>
         {item.people.length ? (
           <div className="micro-avatars" aria-label={`Persone: ${item.people.join(", ")}`}>
-            {item.people.slice(0, 3).map((name) => {
-              const person = people.find((entry) => entry.name === name);
-              return person ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={name} src={person.src} alt={name} title={name} />
-              ) : null;
-            })}
+            {item.people.slice(0, 3).map((name) => (
+              <span key={name} title={name}>
+                {name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+              </span>
+            ))}
           </div>
         ) : null}
       </div>
@@ -788,24 +761,16 @@ function Inspector({
               </div>
               {item.people.length ? (
                 <div className="person-list">
-                  {item.people.map((name) => {
-                    const person = people.find((entry) => entry.name === name);
-                    return (
+                  {item.people.map((name) => (
                       <div key={name}>
-                        {person ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={person.src} alt="" />
-                        ) : (
-                          <span>{name.slice(0, 1)}</span>
-                        )}
+                        <span>{name.split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
                         <p>
                           <strong>{name}</strong>
                           <small>Rilevamento confermato</small>
                         </p>
                         <CheckCircle2 size={16} />
                       </div>
-                    );
-                  })}
+                  ))}
                 </div>
               ) : (
                 <button className="empty-organize">
@@ -855,7 +820,7 @@ function Inspector({
                 <Folder size={18} />
                 <span>
                   <strong>{item.group}</strong>
-                  <small>24 elementi</small>
+                  <small>Gruppo assegnato</small>
                 </span>
                 <ChevronRight size={16} />
               </button>
@@ -870,29 +835,9 @@ function Inspector({
                 <Check size={15} />
               </span>
               <p>
-                <strong>Elaborazione completata</strong>
-                <small>Anteprima, HLS e thumbnail generate</small>
-                <time>Oggi, 11:46</time>
-              </p>
-            </div>
-            <div>
-              <span className="activity-icon purple">
-                <Sparkles size={15} />
-              </span>
-              <p>
-                <strong>3 persone riconosciute</strong>
-                <small>Conferma suggerimenti nella sezione Persone</small>
-                <time>Oggi, 11:45</time>
-              </p>
-            </div>
-            <div>
-              <span className="activity-icon neutral">
-                <Upload size={15} />
-              </span>
-              <p>
-                <strong>File importato</strong>
-                <small>Da Sara Porta · MacBook Pro</small>
-                <time>Oggi, 11:42</time>
+                <strong>{item.status === "ready" ? "Media disponibile" : "Elaborazione in corso"}</strong>
+                <small>{item.sourceFileName ?? item.title}</small>
+                <time>{item.date}</time>
               </p>
             </div>
           </div>
@@ -1050,13 +995,15 @@ function ArrowRightIcon() {
 
 function CommandPalette({
   onClose,
-  onOpenItem
+  onOpenItem,
+  items
 }: {
   onClose: () => void;
   onOpenItem: (item: MediaItem) => void;
+  items: MediaItem[];
 }) {
   const [query, setQuery] = useState("");
-  const results = demoMedia
+  const results = items
     .filter((item) => `${item.title} ${item.tags.join(" ")} ${item.people.join(" ")}`.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 4);
 
@@ -1095,7 +1042,7 @@ function CommandPalette({
               </button>
               <button>
                 <span className="command-action blue"><UsersRound size={17} /></span>
-                <p><strong>Riconosci persone</strong><small>12 volti da confermare</small></p>
+                <p><strong>Gestisci persone</strong><small>Organizza i volti della libreria</small></p>
                 <ChevronRight size={16} />
               </button>
             </>
@@ -1205,7 +1152,10 @@ export function MediaWorkspace() {
   const [filter, setFilter] = useState<"all" | MediaType>("all");
   const [sort, setSort] = useState<"recent" | "name">("recent");
   const [view, setView] = useState<"grid" | "compact">("grid");
-  const [items, setItems] = useState<MediaItem[]>(demoMedia);
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [taxonomyPeople, setTaxonomyPeople] = useState<string[]>([]);
+  const [taxonomyTags, setTaxonomyTags] = useState<Array<{ name: string; color: string }>>([]);
+  const [taxonomyGroups, setTaxonomyGroups] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspected, setInspected] = useState<MediaItem | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -1287,6 +1237,10 @@ export function MediaWorkspace() {
     [items, selectedIds]
   );
   const advancedFilterCount = countAdvancedFilters(advancedFilters);
+  const imageCount = items.filter((item) => item.type === "image").length;
+  const videoCount = items.filter((item) => item.type === "video").length;
+  const uncataloguedCount = items.filter((item) => !item.tags.length || item.status === "processing").length;
+  const duplicateCount = items.reduce((total, item) => total + (item.duplicateCount ?? 0), 0);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -1314,13 +1268,32 @@ export function MediaWorkspace() {
     let active = true;
     void fetch("/api/media?take=80")
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { items?: PersistedMediaRecord[] } | null) => {
-        if (!active || !payload?.items?.length) return;
-        const persisted = payload.items.map((item) => persistedToMedia(item));
-        setItems((current) => {
-          const persistedIds = new Set(persisted.map((item) => item.id));
-          return [...persisted, ...current.filter((item) => !persistedIds.has(item.id))];
-        });
+      .then((payload: { items?: PersistedMediaRecord[]; mode?: string } | null) => {
+        if (!active || !Array.isArray(payload?.items)) return;
+        setItems(payload.mode === "demo"
+          ? demoMedia
+          : payload.items.map((item) => persistedToMedia(item)));
+      })
+      .catch(() => undefined);
+    void fetch("/api/taxonomy")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: {
+        people?: Array<string | { name: string }>;
+        tags?: Array<string | { name: string; color?: string | null }>;
+        groups?: Array<string | { name: string }>;
+      } | null) => {
+        if (!active || !payload) return;
+        setTaxonomyPeople((payload.people ?? []).map((entry) => typeof entry === "string" ? entry : entry.name));
+        setTaxonomyTags((payload.tags ?? []).map((entry) => typeof entry === "string"
+          ? { name: entry, color: "#6D5DFB" }
+          : { name: entry.name, color: entry.color ?? "#6D5DFB" }));
+        setTaxonomyGroups((payload.groups ?? []).map((entry) => typeof entry === "string" ? entry : entry.name));
+      })
+      .catch(() => undefined);
+    void fetch("/api/users")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { onboarding?: boolean } | null) => {
+        if (active && payload?.onboarding) setActiveNav("Utenti & accessi");
       })
       .catch(() => undefined);
     return () => {
@@ -1444,17 +1417,6 @@ export function MediaWorkspace() {
     setItems((current) => [...created, ...current]);
     setToast(`${files.length} ${files.length === 1 ? "file importato" : "file importati"} · elaborazione avviata`);
 
-    created.forEach((item, index) => {
-      window.setTimeout(() => {
-        updateItem(item.id, (current) => ({
-          ...current,
-          status: "ready",
-          duration: current.type === "video" ? "00:36" : undefined,
-          dimensions: current.type === "video" ? "3840 × 2160" : "6000 × 4000"
-        }));
-      }, 4600 + index * 700);
-    });
-
     files.forEach((file, index) => {
       const localItem = created[index];
       const body = new FormData();
@@ -1504,7 +1466,14 @@ export function MediaWorkspace() {
   return (
     <div className={inspected ? "app-shell has-inspector" : "app-shell"}>
       <div className={mobileSidebar ? "sidebar-drawer is-open" : "sidebar-drawer"}>
-        <Sidebar active={activeNav} onNavigate={navigate} onUpload={() => setUploadOpen(true)} />
+        <Sidebar
+          active={activeNav}
+          people={taxonomyPeople}
+          uncataloguedCount={uncataloguedCount}
+          duplicateCount={duplicateCount}
+          onNavigate={navigate}
+          onUpload={() => setUploadOpen(true)}
+        />
         <button className="drawer-scrim" onClick={() => setMobileSidebar(false)} aria-label="Chiudi menu" />
       </div>
 
@@ -1523,40 +1492,40 @@ export function MediaWorkspace() {
           <>
         <section className="page-intro">
           <div>
-            <p className="eyebrow">LUNEDÌ, 28 LUGLIO</p>
+            <p className="eyebrow">ARCHIVIO PERSONALE</p>
             <h1>
               La tua libreria, <em>viva.</em>
             </h1>
             <p className="page-subtitle">
-              2.486 ricordi, già ordinati e pronti da rivivere.
+              {items.length ? `${items.length} media nel tuo archivio.` : "Il tuo archivio è pronto per il primo contenuto."}
             </p>
           </div>
           <div className="library-metrics">
             <div>
-              <strong>2.486</strong>
+              <strong>{items.length.toLocaleString("it-IT")}</strong>
               <span>Media</span>
             </div>
             <i />
             <div>
-              <strong>184</strong>
+              <strong>{videoCount.toLocaleString("it-IT")}</strong>
               <span>Video</span>
             </div>
             <i />
             <div>
-              <strong>42</strong>
+              <strong>{taxonomyPeople.length.toLocaleString("it-IT")}</strong>
               <span>Persone</span>
             </div>
           </div>
         </section>
 
-        <StatusRail />
+        <StatusRail items={items} />
 
         <section className="library-toolbar">
           <div className="filter-tabs">
             {[
-              { value: "all", label: "Tutti", count: 2486 },
-              { value: "image", label: "Foto", count: 2302 },
-              { value: "video", label: "Video", count: 184 }
+              { value: "all", label: "Tutti", count: items.length },
+              { value: "image", label: "Foto", count: imageCount },
+              { value: "video", label: "Video", count: videoCount }
             ].map((entry) => (
               <button
                 className={filter === entry.value ? "is-active" : ""}
@@ -1675,6 +1644,7 @@ export function MediaWorkspace() {
               item={item}
               selected={selectedIds.has(item.id)}
               quickMode={quickMode}
+              quickTags={taxonomyTags}
               onOpen={setInspected}
               onSelect={toggleSelect}
               onFavorite={toggleFavorite}
@@ -1697,8 +1667,7 @@ export function MediaWorkspace() {
         ) : null}
 
         <footer className="content-footer">
-          <span>Mostrati {visibleItems.length} di 2.486 media</span>
-          <button>Carica altri</button>
+          <span>Mostrati {visibleItems.length} di {items.length} media</span>
         </footer>
           </>
         )}
@@ -1733,6 +1702,7 @@ export function MediaWorkspace() {
       {uploadOpen ? <UploadModal onClose={() => setUploadOpen(false)} onUpload={handleUpload} /> : null}
       {commandOpen ? (
         <CommandPalette
+          items={items}
           onClose={() => setCommandOpen(false)}
           onOpenItem={(item) => setInspected(item)}
         />
@@ -1740,9 +1710,9 @@ export function MediaWorkspace() {
       {filtersOpen ? (
         <AdvancedFilters
           value={advancedFilters}
-          people={people.map(({ name }) => name)}
-          tags={Array.from(new Set(items.flatMap((item) => item.tags))).slice(0, 12)}
-          groups={Array.from(new Set(items.map((item) => item.group))).slice(0, 10)}
+          people={taxonomyPeople}
+          tags={taxonomyTags.map(({ name }) => name)}
+          groups={taxonomyGroups}
           resultCount={visibleItems.length}
           onApply={setAdvancedFilters}
           onClose={() => setFiltersOpen(false)}
@@ -1775,7 +1745,7 @@ export function MediaWorkspace() {
       {organizerOpen ? (
         <OrganizeFilesModal
           items={selectedItems.length ? selectedItems : inspected ? [inspected] : []}
-          people={people.map(({ name }) => name)}
+          people={taxonomyPeople}
           onClose={() => setOrganizerOpen(false)}
           onComplete={setToast}
         />
