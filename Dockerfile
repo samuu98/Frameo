@@ -24,6 +24,7 @@ ENV HOSTNAME=0.0.0.0
 RUN apk add --no-cache ffmpeg tini
 COPY --from=runtime-tools /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/node_modules/@img ./node_modules/@img
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
