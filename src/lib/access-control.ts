@@ -45,7 +45,9 @@ const scopeToWhere = (
 ): Prisma.MediaAssetWhereInput | null => {
   if (scope === AccessScope.ALL) return {};
   if (!targetId) return null;
-  if (scope === AccessScope.MEDIA) return { id: targetId };
+  if (scope === AccessScope.MEDIA) {
+    return { OR: [{ id: targetId }, { sourceMediaId: targetId }] };
+  }
   if (scope === AccessScope.PERSON) {
     return { people: { some: { personId: targetId } } };
   }

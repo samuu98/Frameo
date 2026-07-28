@@ -22,6 +22,7 @@ export interface MediaItem {
   accent: string;
   duration?: string;
   durationMs?: number | null;
+  frameRate?: number | null;
   dimensions: string;
   size: string;
   date: string;
@@ -36,7 +37,36 @@ export interface MediaItem {
   markers?: HighlightMarker[];
   duplicateCount?: number;
   sourceFileName?: string;
+  sourceMediaId?: string | null;
+  sourceTimeMs?: number | null;
   aspect: "portrait" | "landscape" | "square" | "wide";
+}
+
+export interface PersistedMediaRecord {
+  id: string;
+  title: string;
+  kind: "IMAGE" | "VIDEO";
+  status: "UPLOADING" | "PROCESSING" | "READY" | "ERROR";
+  bytes: string;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  frameRate?: number | null;
+  createdAt: string;
+  dominantColor: string | null;
+  favorite: boolean;
+  thumbnailUrl: string | null;
+  previewUrl: string | null;
+  originalUrl: string;
+  streamUrl: string | null;
+  sourceFileName?: string | null;
+  sourceMediaId?: string | null;
+  sourceTimeMs?: number | null;
+  markers?: HighlightMarker[];
+  duplicateCount?: number;
+  tags: Array<{ name: string }>;
+  people: Array<{ name: string }>;
+  groups: Array<{ name: string }>;
 }
 
 export interface AdvancedFilterState {

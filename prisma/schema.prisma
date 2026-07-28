@@ -75,7 +75,10 @@ model MediaAsset {
   width               Int?
   height              Int?
   durationMs          Int?
+  frameRate           Float?
   capturedAt          DateTime?
+  sourceMediaId       String?
+  sourceTimeMs        Int?
   originalPath        String
   thumbnailPath       String?
   previewPath         String?
@@ -99,6 +102,8 @@ model MediaAsset {
   editSegments        EditSegment[]
   editOutputs         EditProject[]     @relation("EditOutput")
   fileOperations      FileOperation[]
+  sourceMedia         MediaAsset?       @relation("VideoScreenshots", fields: [sourceMediaId], references: [id], onDelete: SetNull)
+  screenshots         MediaAsset[]      @relation("VideoScreenshots")
 
   @@index([kind, status])
   @@index([createdAt])
@@ -106,6 +111,7 @@ model MediaAsset {
   @@index([contentHash])
   @@index([perceptualHash])
   @@index([directoryKey])
+  @@index([sourceMediaId, sourceTimeMs])
 }
 
 model Person {

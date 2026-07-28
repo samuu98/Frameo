@@ -43,8 +43,17 @@ interface ProbeResult {
     codec_type?: string;
     width?: number;
     height?: number;
+    avg_frame_rate?: string;
+    r_frame_rate?: string;
   }>;
 }
+
+const parseFrameRate = (value?: string) => {
+  if (!value) return null;
+  const [numerator, denominator = "1"] = value.split("/");
+  const rate = Number(numerator) / Number(denominator);
+  return Number.isFinite(rate) && rate > 0 ? Math.round(rate * 1000) / 1000 : null;
+};
 
 async function processImage(mediaId: string, inputPath: string, outputDir: string) {
   const thumbnailPath = path.join(outputDir, "thumbnail.webp");
@@ -189,6 +198,7 @@ async function processVideo(mediaId: string, inputPath: string, outputDir: strin
       width: videoStream?.width,
       height: videoStream?.height,
       durationMs: Math.round(durationSeconds * 1000),
+      frameRate: parseFrameRate(videoStream?.avg_frame_rate ?? videoStream?.r_frame_rate),
       thumbnailPath: relativeStoragePath(thumbnailPath),
       previewPath: relativeStoragePath(previewPath),
       streamPath: relativeStoragePath(playlistPath),

@@ -15,6 +15,8 @@ catalogare e riprodurre foto e video dal browser.
   stato, preferiti, marker e duplicati
 - marker temporali e player Highlights infinito sulla vista filtrata, con ritorno
   immediato al video sorgente
+- Frame Lab per scorrere i video a passi di 1 o 10 fotogrammi, leggere timecode e
+  FPS reali e salvare screenshot PNG alla risoluzione sorgente
 - anteprima video automatica al passaggio del mouse
 - rilevamento duplicati esatti SHA-256 e somiglianze visuali tramite dHash
 - editor FFmpeg non distruttivo per tagliare, dividere e unire video
@@ -70,6 +72,10 @@ flowchart LR
 Gli originali non vengono modificati. Ogni derivato è salvato in
 `storage/derived/<media-id>` e può essere rigenerato senza perdita.
 
+Gli screenshot estratti dai video diventano normali media della libreria: restano
+collegati al video e al timecode sorgente, ereditano persone, tag e gruppi e
+seguono quindi le stesse regole di visibilità.
+
 Le operazioni dell'editor generano nuovi originali sotto `storage/edited`. Lo
 spostamento fisico è invece intenzionalmente distruttivo sul vecchio path: richiede
 la conferma testuale `SPOSTA`, verifica che i path restino nello storage gestito,
@@ -77,7 +83,8 @@ evita collisioni e ripristina il file se l'aggiornamento del database fallisce.
 
 ## Modello dati
 
-- `MediaAsset`: originale, derivati, stato, metadati tecnici
+- `MediaAsset`: originale, derivati, stato, metadati tecnici, FPS e relazione
+  sorgente/screenshot
 - `Person` / `MediaPerson`: persone e regioni facciali opzionali
 - `Tag` / `MediaTag`: tassonomia libera many-to-many
 - `Group` / `GroupMedia`: raccolte ordinate
@@ -95,6 +102,7 @@ evita collisioni e ripristina il file se l'aggiornamento del database fallisce.
 - `GET /api/media/:id` — dettaglio completo
 - `PATCH /api/media/:id` — titolo, note, preferito, tag, persone e gruppi
 - `GET|POST /api/media/:id/markers` — marker dei momenti salienti
+- `GET|POST /api/media/:id/screenshots` — elenco e cattura precisa dei fotogrammi
 - `GET /api/highlights` — feed filtrato dei marker in evidenza
 - `GET|POST /api/duplicates` — revisione e nuova scansione duplicati
 - `GET|POST /api/editor` — progetti di taglio, split e merge

@@ -4,6 +4,7 @@ import {
   Archive,
   ArrowDownUp,
   Bell,
+  Camera,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -66,13 +67,15 @@ import {
   type AdvancedFilterState,
   type HighlightMarker,
   type MediaItem,
-  type MediaType
+  type MediaType,
+  type PersistedMediaRecord
 } from "@/types/media";
 import {
   AdvancedFilters,
   countAdvancedFilters
 } from "@/components/advanced-filters";
 import { DuplicatesPanel } from "@/components/duplicates-panel";
+import { FrameCaptureModal } from "@/components/frame-capture-modal";
 import { HighlightsPlayer } from "@/components/highlights-player";
 import { OrganizeFilesModal } from "@/components/organize-files-modal";
 import { UserManagement } from "@/components/user-management";
@@ -102,30 +105,6 @@ const formatBytes = (bytes: number) => {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 };
 
-interface PersistedMedia {
-  id: string;
-  title: string;
-  kind: "IMAGE" | "VIDEO";
-  status: "UPLOADING" | "PROCESSING" | "READY" | "ERROR";
-  bytes: string;
-  width: number | null;
-  height: number | null;
-  durationMs: number | null;
-  createdAt: string;
-  dominantColor: string | null;
-  favorite: boolean;
-  thumbnailUrl: string | null;
-  previewUrl: string | null;
-  originalUrl: string;
-  streamUrl: string | null;
-  sourceFileName?: string | null;
-  markers?: HighlightMarker[];
-  duplicateCount?: number;
-  tags: Array<{ name: string }>;
-  people: Array<{ name: string }>;
-  groups: Array<{ name: string }>;
-}
-
 const formatDuration = (milliseconds: number | null) => {
   if (!milliseconds) return "—";
   const totalSeconds = Math.round(milliseconds / 1000);
@@ -134,7 +113,7 @@ const formatDuration = (milliseconds: number | null) => {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
-const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem => ({
+const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): MediaItem => ({
   id: item.id,
   title: item.title,
   type: item.kind === "VIDEO" ? "video" : "image",
@@ -145,6 +124,7 @@ const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem
   accent: item.dominantColor ?? "#817A70",
   duration: item.kind === "VIDEO" ? formatDuration(item.durationMs) : undefined,
   durationMs: item.durationMs,
+  frameRate: item.frameRate,
   dimensions:
     item.width && item.height ? `${item.width} × ${item.height}` : "Analisi in corso",
   size: formatBytes(Number(item.bytes)),
@@ -167,6 +147,8 @@ const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem
   markers: item.markers ?? [],
   duplicateCount: item.duplicateCount ?? 0,
   sourceFileName: item.sourceFileName ?? undefined,
+  sourceMediaId: item.sourceMediaId,
+  sourceTimeMs: item.sourceTimeMs,
   aspect:
     item.width && item.height && item.height > item.width * 1.12
       ? "portrait"
@@ -531,7 +513,8 @@ function Inspector({
   onAddTag,
   onAddMarker,
   onEdit,
-  onRename
+  onRename,
+  onCapture
 }: {
   item: MediaItem;
   onClose: () => void;
@@ -540,6 +523,7 @@ function Inspector({
   onAddMarker: (marker: HighlightMarker) => void;
   onEdit: () => void;
   onRename: (name: string) => void;
+  onCapture: (positionMs: number) => void;
 }) {
   const [tab, setTab] = useState<"info" | "organizza" | "attivita">("info");
   const [playing, setPlaying] = useState(false);
@@ -598,6 +582,11 @@ function Inspector({
           </button>
         ) : null}
         <div className="preview-actions">
+          {item.type === "video" ? (
+            <button onClick={() => onCapture(currentPosition)} aria-label="Cattura fotogramma">
+              <Camera size={17} />
+            </button>
+          ) : null}
           <button aria-label="Vista a schermo intero">
             <Maximize2 size={17} />
           </button>
@@ -703,11 +692,18 @@ function Inspector({
 
       <div className="inspector-body">
         {item.type === "video" ? (
-          <button className="open-editor-from-inspector" onClick={onEdit}>
-            <Scissors size={15} />
-            Apri nell’editor leggero
-            <ChevronRight size={15} />
-          </button>
+          <div className="inspector-video-tools">
+            <button className="capture-frame-from-inspector" onClick={() => onCapture(currentPosition)}>
+              <Camera size={15} />
+              Cattura fotogramma
+              <span>FRAME LAB</span>
+            </button>
+            <button className="open-editor-from-inspector" onClick={onEdit}>
+              <Scissors size={15} />
+              Apri nell’editor leggero
+              <ChevronRight size={15} />
+            </button>
+          </div>
         ) : null}
         {tab === "info" ? (
           <>
@@ -1224,6 +1220,10 @@ export function MediaWorkspace() {
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [organizerOpen, setOrganizerOpen] = useState(false);
+  const [captureRequest, setCaptureRequest] = useState<{
+    item: MediaItem;
+    initialTimeMs: number;
+  } | null>(null);
 
   const visibleItems = useMemo(() => {
     let result = filter === "all" ? [...items] : items.filter((item) => item.type === filter);
@@ -1314,7 +1314,7 @@ export function MediaWorkspace() {
     let active = true;
     void fetch("/api/media?take=80")
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { items?: PersistedMedia[] } | null) => {
+      .then((payload: { items?: PersistedMediaRecord[] } | null) => {
         if (!active || !payload?.items?.length) return;
         const persisted = payload.items.map((item) => persistedToMedia(item));
         setItems((current) => {
@@ -1415,6 +1415,15 @@ export function MediaWorkspace() {
       });
   };
 
+  const addCapturedFrame = (record: PersistedMediaRecord) => {
+    const captured = persistedToMedia(record);
+    setItems((current) => [
+      captured,
+      ...current.filter((item) => item.id !== captured.id)
+    ]);
+    setToast(`“${captured.title}” salvato nella libreria`);
+  };
+
   const handleUpload = (files: File[]) => {
     const created = files.map((file, index): MediaItem => ({
       id: `local-${Date.now()}-${index}`,
@@ -1452,7 +1461,7 @@ export function MediaWorkspace() {
       body.append("file", file);
       void fetch("/api/media", { method: "POST", body })
         .then((response) => (response.ok ? response.json() : null))
-        .then((payload: { item?: PersistedMedia } | null) => {
+        .then((payload: { item?: PersistedMediaRecord } | null) => {
           if (!payload?.item || payload.item.id === localItem.id || !payload.item.createdAt) return;
           const serverItem = persistedToMedia(payload.item, localItem.src);
           setItems((current) =>
@@ -1464,7 +1473,7 @@ export function MediaWorkspace() {
             window.setTimeout(() => {
               void fetch(`/api/media/${payload.item?.id}`)
                 .then((response) => (response.ok ? response.json() : null))
-                .then((fresh: { item?: PersistedMedia } | null) => {
+                .then((fresh: { item?: PersistedMediaRecord } | null) => {
                   if (!fresh?.item) return;
                   const updated = persistedToMedia(fresh.item, localItem.src);
                   setItems((current) =>
@@ -1704,6 +1713,10 @@ export function MediaWorkspace() {
           onAddMarker={(marker) => addMarker(inspected, marker)}
           onEdit={() => setEditorOpen(true)}
           onRename={(name) => renameFile(inspected, name)}
+          onCapture={(initialTimeMs) => setCaptureRequest({
+            item: inspected,
+            initialTimeMs
+          })}
         />
       ) : null}
 
@@ -1765,6 +1778,14 @@ export function MediaWorkspace() {
           people={people.map(({ name }) => name)}
           onClose={() => setOrganizerOpen(false)}
           onComplete={setToast}
+        />
+      ) : null}
+      {captureRequest ? (
+        <FrameCaptureModal
+          item={captureRequest.item}
+          initialTimeMs={captureRequest.initialTimeMs}
+          onClose={() => setCaptureRequest(null)}
+          onCaptured={addCapturedFrame}
         />
       ) : null}
       {toast ? (
