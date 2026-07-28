@@ -6,6 +6,9 @@ type MediaWithRelations = Prisma.MediaAssetGetPayload<{
     people: { include: { person: true } };
     groups: { include: { group: true } };
     jobs: true;
+    markers: true;
+    duplicateSources: true;
+    duplicateCandidates: true;
   };
 }>;
 
@@ -26,6 +29,10 @@ export function mediaToJson(media: MediaWithRelations) {
     groups: media.groups.map(({ group, sortOrder }) => ({
       ...group,
       sortOrder
-    }))
+    })),
+    markers: media.markers,
+    duplicateCount:
+      media.duplicateSources.filter(({ status }) => status === "OPEN").length +
+      media.duplicateCandidates.filter(({ status }) => status === "OPEN").length
   };
 }

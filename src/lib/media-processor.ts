@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { JobState, MediaKind, MediaStatus } from "@prisma/client";
+import { refreshPerceptualHash } from "@/lib/duplicate-detector";
 import { prisma } from "@/lib/prisma";
 
 const storageRoot = path.resolve(
@@ -80,6 +81,7 @@ async function processImage(mediaId: string, inputPath: string, outputDir: strin
       status: MediaStatus.READY
     }
   });
+  await refreshPerceptualHash(mediaId, thumbnailPath);
 }
 
 async function processVideo(mediaId: string, inputPath: string, outputDir: string) {
@@ -129,7 +131,7 @@ async function processVideo(mediaId: string, inputPath: string, outputDir: strin
     "-t",
     "6",
     "-vf",
-    "scale=720:-2:force_original_aspect_ratio=decrease",
+    "scale=720:-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
     "-an",
     "-c:v",
     "libx264",
@@ -149,7 +151,7 @@ async function processVideo(mediaId: string, inputPath: string, outputDir: strin
     "-i",
     inputPath,
     "-vf",
-    "scale=w=1280:h=-2:force_original_aspect_ratio=decrease",
+    "scale=w=1280:h=-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
     "-c:v",
     "libx264",
     "-preset",
@@ -194,6 +196,7 @@ async function processVideo(mediaId: string, inputPath: string, outputDir: strin
       status: MediaStatus.READY
     }
   });
+  await refreshPerceptualHash(mediaId, thumbnailPath);
 }
 
 export async function processMediaAsset(mediaId: string) {

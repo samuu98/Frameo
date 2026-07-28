@@ -1,6 +1,12 @@
 import { MediaStatus, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  buildAccessWhere,
+  getRequestUser,
+  requireAdmin,
+  requireEditor
+} from "@/lib/access-control";
 import { prisma } from "@/lib/prisma";
 import { mediaToJson } from "@/lib/media-json";
 
@@ -21,19 +27,23 @@ const includeRelations = {
   tags: { include: { tag: true } },
   people: { include: { person: true } },
   groups: { include: { group: true } },
-  jobs: true
+  jobs: true,
+  markers: true,
+  duplicateSources: true,
+  duplicateCandidates: true
 } as const;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") {
     return NextResponse.json({ error: "Demo mode" }, { status: 404 });
   }
   const { id } = await context.params;
-  const media = await prisma.mediaAsset.findUnique({
-    where: { id },
+  const user = await getRequestUser(request);
+  const media = await prisma.mediaAsset.findFirst({
+    where: { AND: [{ id }, buildAccessWhere(user)] },
     include: includeRelations
   });
   if (!media) return NextResponse.json({ error: "Media non trovato" }, { status: 404 });
@@ -55,6 +65,18 @@ export async function PATCH(
       { status: 422 }
     );
   }
+
+  let user;
+  try {
+    user = await requireEditor(request);
+  } catch {
+    return NextResponse.json({ error: "Permessi di modifica richiesti" }, { status: 403 });
+  }
+  const accessible = await prisma.mediaAsset.findFirst({
+    where: { AND: [{ id }, buildAccessWhere(user)] },
+    select: { id: true }
+  });
+  if (!accessible) return NextResponse.json({ error: "Media non trovato" }, { status: 404 });
 
   const { tagNames, personIds, groupIds, capturedAt, ...fields } = parsed.data;
   const update: Prisma.MediaAssetUpdateInput = {
@@ -107,11 +129,16 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") {
     return NextResponse.json({ ok: true, mode: "demo" });
+  }
+  try {
+    await requireAdmin(request);
+  } catch {
+    return NextResponse.json({ error: "Permessi amministratore richiesti" }, { status: 403 });
   }
   const { id } = await context.params;
   await prisma.mediaAsset.update({

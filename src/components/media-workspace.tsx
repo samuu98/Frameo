@@ -12,9 +12,11 @@ import {
   CircleHelp,
   Clock3,
   Command,
+  CopyCheck,
   Download,
   Film,
   Folder,
+  FolderInput,
   Grid2X2,
   HardDrive,
   Heart,
@@ -30,10 +32,13 @@ import {
   MoreHorizontal,
   PanelRightClose,
   Pause,
+  PencilLine,
   Play,
   Plus,
   Search,
+  Scissors,
   Settings,
+  Shield,
   SlidersHorizontal,
   Sparkles,
   Star,
@@ -56,7 +61,22 @@ import {
   useState
 } from "react";
 import { demoMedia, people, quickTags } from "@/data/media";
-import type { MediaItem, MediaType } from "@/types/media";
+import {
+  emptyAdvancedFilters,
+  type AdvancedFilterState,
+  type HighlightMarker,
+  type MediaItem,
+  type MediaType
+} from "@/types/media";
+import {
+  AdvancedFilters,
+  countAdvancedFilters
+} from "@/components/advanced-filters";
+import { DuplicatesPanel } from "@/components/duplicates-panel";
+import { HighlightsPlayer } from "@/components/highlights-player";
+import { OrganizeFilesModal } from "@/components/organize-files-modal";
+import { UserManagement } from "@/components/user-management";
+import { VideoEditorModal } from "@/components/video-editor-modal";
 
 const navItems = [
   { label: "Libreria", icon: LayoutGrid },
@@ -69,6 +89,11 @@ const organizeItems = [
   { label: "Persone", icon: UsersRound },
   { label: "Tag", icon: Tag },
   { label: "Gruppi", icon: Layers3 }
+];
+
+const adminItems = [
+  { label: "Duplicati", icon: CopyCheck },
+  { label: "Utenti & accessi", icon: Shield }
 ];
 
 const formatBytes = (bytes: number) => {
@@ -92,6 +117,10 @@ interface PersistedMedia {
   thumbnailUrl: string | null;
   previewUrl: string | null;
   originalUrl: string;
+  streamUrl: string | null;
+  sourceFileName?: string | null;
+  markers?: HighlightMarker[];
+  duplicateCount?: number;
   tags: Array<{ name: string }>;
   people: Array<{ name: string }>;
   groups: Array<{ name: string }>;
@@ -110,8 +139,12 @@ const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem
   title: item.title,
   type: item.kind === "VIDEO" ? "video" : "image",
   src: item.thumbnailUrl ?? item.previewUrl ?? fallbackSrc ?? item.originalUrl,
+  previewUrl: item.previewUrl,
+  originalUrl: item.originalUrl,
+  streamUrl: item.streamUrl,
   accent: item.dominantColor ?? "#817A70",
   duration: item.kind === "VIDEO" ? formatDuration(item.durationMs) : undefined,
+  durationMs: item.durationMs,
   dimensions:
     item.width && item.height ? `${item.width} × ${item.height}` : "Analisi in corso",
   size: formatBytes(Number(item.bytes)),
@@ -120,6 +153,7 @@ const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem
     month: "short",
     year: "numeric"
   }).format(new Date(item.createdAt)),
+  createdAt: item.createdAt,
   people: item.people.map(({ name }) => name),
   tags: item.tags.map(({ name }) => name),
   group: item.groups[0]?.name ?? "Da catalogare",
@@ -130,6 +164,9 @@ const persistedToMedia = (item: PersistedMedia, fallbackSrc?: string): MediaItem
         ? "error"
         : "processing",
   favorite: item.favorite,
+  markers: item.markers ?? [],
+  duplicateCount: item.duplicateCount ?? 0,
+  sourceFileName: item.sourceFileName ?? undefined,
   aspect:
     item.width && item.height && item.height > item.width * 1.12
       ? "portrait"
@@ -198,6 +235,19 @@ function Sidebar({
           >
             <Icon size={18} />
             <span>{label}</span>
+          </button>
+        ))}
+
+        <p className="nav-caption nav-caption-spaced">Amministra</p>
+        {adminItems.map(({ label, icon: Icon }) => (
+          <button
+            className={active === label ? "nav-item is-active" : "nav-item"}
+            key={label}
+            onClick={() => onNavigate(label)}
+          >
+            <Icon size={18} />
+            <span>{label}</span>
+            {label === "Duplicati" ? <em>2</em> : null}
           </button>
         ))}
       </nav>
@@ -338,6 +388,7 @@ function MediaCard({
   onQuickTag: (item: MediaItem, tag: string, event: MouseEvent) => void;
 }) {
   const isProcessing = item.status === "processing";
+  const hoverVideoRef = useRef<HTMLVideoElement>(null);
 
   return (
     <article
@@ -348,10 +399,34 @@ function MediaCard({
         isProcessing ? "is-processing" : ""
       ].join(" ")}
       onClick={() => (quickMode ? undefined : onOpen(item))}
+      onMouseEnter={() => {
+        if (hoverVideoRef.current) {
+          hoverVideoRef.current.currentTime = 0;
+          void hoverVideoRef.current.play().catch(() => undefined);
+        }
+      }}
+      onMouseLeave={() => {
+        if (hoverVideoRef.current) {
+          hoverVideoRef.current.pause();
+          hoverVideoRef.current.currentTime = 0;
+        }
+      }}
     >
       <div className="media-visual" style={{ backgroundColor: item.accent }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={item.src} alt="" loading="lazy" />
+        {item.type === "video" && item.previewUrl ? (
+          <video
+            ref={hoverVideoRef}
+            className="hover-video-preview"
+            src={item.previewUrl}
+            poster={item.src}
+            muted
+            loop
+            playsInline
+            preload="metadata"
+          />
+        ) : null}
         <div className="media-shade" />
 
         <button
@@ -413,6 +488,12 @@ function MediaCard({
 
         <div className="media-bottomline">
           {item.duration ? <span>{item.duration}</span> : <span>{item.dimensions}</span>}
+          {item.type === "video" && item.markers?.length ? (
+            <span className="marker-count"><Sparkles size={11} /> {item.markers.length}</span>
+          ) : null}
+          {item.duplicateCount ? (
+            <span className="duplicate-count"><CopyCheck size={11} /> {item.duplicateCount}</span>
+          ) : null}
           <button aria-label="Altre azioni">
             <MoreHorizontal size={17} />
           </button>
@@ -447,16 +528,34 @@ function Inspector({
   item,
   onClose,
   onFavorite,
-  onAddTag
+  onAddTag,
+  onAddMarker,
+  onEdit,
+  onRename
 }: {
   item: MediaItem;
   onClose: () => void;
   onFavorite: () => void;
   onAddTag: (tag: string) => void;
+  onAddMarker: (marker: HighlightMarker) => void;
+  onEdit: () => void;
+  onRename: (name: string) => void;
 }) {
   const [tab, setTab] = useState<"info" | "organizza" | "attivita">("info");
   const [playing, setPlaying] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [markerOpen, setMarkerOpen] = useState(false);
+  const [markerLabel, setMarkerLabel] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState(item.title);
+  const [currentPosition, setCurrentPosition] = useState(
+    Math.min(18_000, item.durationMs ?? 18_000)
+  );
+
+  useEffect(() => {
+    setRenameValue(item.title);
+    setRenameOpen(false);
+  }, [item.id, item.title]);
 
   return (
     <aside className="inspector" aria-label={`Dettagli di ${item.title}`}>
@@ -480,8 +579,19 @@ function Inspector({
       </div>
 
       <div className="inspector-preview" style={{ backgroundColor: item.accent }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={item.src} alt={item.title} />
+        {playing && item.type === "video" && (item.originalUrl || item.previewUrl) ? (
+          <video
+            src={item.originalUrl ?? item.previewUrl ?? undefined}
+            poster={item.src}
+            autoPlay
+            muted
+            playsInline
+            onTimeUpdate={(event) => setCurrentPosition(event.currentTarget.currentTime * 1000)}
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={item.src} alt={item.title} />
+        )}
         {item.type === "video" ? (
           <button className="preview-play" onClick={() => setPlaying((value) => !value)}>
             {playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
@@ -501,18 +611,77 @@ function Inspector({
       </div>
 
       {item.type === "video" ? (
-        <div className="timeline">
-          <span>00:18</span>
-          <div>
-            {Array.from({ length: 22 }).map((_, index) => (
-              <i
-                key={index}
-                style={{ height: `${8 + ((index * 7) % 16)}px` }}
-                className={index < 7 ? "is-passed" : ""}
-              />
-            ))}
+        <div className="inspector-timeline-shell">
+          <div className="timeline">
+            <span>{formatDuration(currentPosition)}</span>
+            <div>
+              {Array.from({ length: 22 }).map((_, index) => (
+                <i
+                  key={index}
+                  style={{ height: `${8 + ((index * 7) % 16)}px` }}
+                  className={index / 22 < currentPosition / (item.durationMs ?? 60_000) ? "is-passed" : ""}
+                />
+              ))}
+              {(item.markers ?? []).map((marker) => (
+                <button
+                  className="timeline-marker"
+                  key={marker.id}
+                  style={{
+                    left: `${Math.min(100, (marker.startMs / (item.durationMs ?? 60_000)) * 100)}%`,
+                    background: marker.color
+                  }}
+                  title={`${marker.label} · ${formatDuration(marker.startMs)}`}
+                  onClick={() => setCurrentPosition(marker.startMs)}
+                />
+              ))}
+            </div>
+            <span>{item.duration}</span>
           </div>
-          <span>{item.duration}</span>
+          <div className="marker-toolbar">
+            <div>
+              {(item.markers ?? []).slice(0, 3).map((marker) => (
+                <button key={marker.id} onClick={() => setCurrentPosition(marker.startMs)}>
+                  <i style={{ background: marker.color }} />
+                  {marker.label}
+                  <span>{formatDuration(marker.startMs)}</span>
+                </button>
+              ))}
+            </div>
+            <button className="add-marker-button" onClick={() => setMarkerOpen((value) => !value)}>
+              <Plus size={14} /> Marker
+            </button>
+          </div>
+          {markerOpen ? (
+            <form
+              className="marker-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!markerLabel.trim()) return;
+                onAddMarker({
+                  id: `local-marker-${Date.now()}`,
+                  label: markerLabel.trim(),
+                  startMs: Math.round(currentPosition),
+                  endMs: Math.min(
+                    Math.round(currentPosition + 6500),
+                    item.durationMs ?? currentPosition + 6500
+                  ),
+                  color: "#6D5DFB",
+                  featured: true
+                });
+                setMarkerLabel("");
+                setMarkerOpen(false);
+              }}
+            >
+              <Sparkles size={15} />
+              <input
+                autoFocus
+                value={markerLabel}
+                onChange={(event) => setMarkerLabel(event.target.value)}
+                placeholder={`Titolo marker a ${formatDuration(currentPosition)}`}
+              />
+              <button type="submit">Aggiungi</button>
+            </form>
+          ) : null}
         </div>
       ) : null}
 
@@ -533,13 +702,46 @@ function Inspector({
       </div>
 
       <div className="inspector-body">
+        {item.type === "video" ? (
+          <button className="open-editor-from-inspector" onClick={onEdit}>
+            <Scissors size={15} />
+            Apri nell’editor leggero
+            <ChevronRight size={15} />
+          </button>
+        ) : null}
         {tab === "info" ? (
           <>
             <section className="detail-section">
               <div className="detail-section-title">
                 <h3>Dettagli file</h3>
-                <button>Modifica</button>
+                <button onClick={() => setRenameOpen((value) => !value)}>
+                  <PencilLine size={13} /> Rinomina file
+                </button>
               </div>
+              {renameOpen ? (
+                <form
+                  className="rename-file-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!renameValue.trim() || renameValue.trim() === item.title) {
+                      setRenameOpen(false);
+                      return;
+                    }
+                    onRename(renameValue.trim());
+                    setRenameOpen(false);
+                  }}
+                >
+                  <PencilLine size={14} />
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    aria-label="Nuovo nome del file"
+                  />
+                  <span>{item.sourceFileName?.match(/\.[^.]+$/)?.[0] ?? (item.type === "video" ? ".mp4" : "")}</span>
+                  <button type="submit">Salva</button>
+                </form>
+              ) : null}
               <dl className="detail-list">
                 <div>
                   <dt>Formato</dt>
@@ -925,11 +1127,15 @@ function CommandPalette({
 function BulkToolbar({
   count,
   onClear,
-  onAddTag
+  onAddTag,
+  onEdit,
+  onOrganize
 }: {
   count: number;
   onClear: () => void;
   onAddTag: (tag: string) => void;
+  onEdit: () => void;
+  onOrganize: () => void;
 }) {
   return (
     <div className="bulk-toolbar">
@@ -940,9 +1146,13 @@ function BulkToolbar({
         <Tag size={16} />
         Tagga
       </button>
-      <button>
-        <Folder size={16} />
-        Sposta
+      <button onClick={onOrganize}>
+        <FolderInput size={16} />
+        Filesystem
+      </button>
+      <button onClick={onEdit}>
+        <Scissors size={16} />
+        Editor
       </button>
       <button>
         <Download size={16} />
@@ -1007,15 +1217,76 @@ export function MediaWorkspace() {
   const [quickMode, setQuickMode] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterState>(
+    emptyAdvancedFilters
+  );
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [highlightsOpen, setHighlightsOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [organizerOpen, setOrganizerOpen] = useState(false);
 
   const visibleItems = useMemo(() => {
     let result = filter === "all" ? [...items] : items.filter((item) => item.type === filter);
     if (activeNav === "Preferiti") result = result.filter((item) => item.favorite);
     if (activeNav === "Da catalogare") result = result.filter((item) => !item.tags.length || item.status === "processing");
     if (activeNav === "Recenti") result = result.slice(0, 7);
+    if (advancedFilters.people.length) {
+      result = result.filter((item) =>
+        advancedFilters.people.some((person) => item.people.includes(person))
+      );
+    }
+    if (advancedFilters.tags.length) {
+      result = result.filter((item) =>
+        advancedFilters.tags.some((tag) => item.tags.includes(tag))
+      );
+    }
+    if (advancedFilters.groups.length) {
+      result = result.filter((item) => advancedFilters.groups.includes(item.group));
+    }
+    if (advancedFilters.duration !== "any") {
+      result = result.filter((item) => {
+        if (item.type !== "video") return false;
+        const duration = item.durationMs ?? 0;
+        if (advancedFilters.duration === "short") return duration < 60_000;
+        if (advancedFilters.duration === "medium") return duration >= 60_000 && duration <= 300_000;
+        return duration > 300_000;
+      });
+    }
+    if (advancedFilters.resolution !== "any") {
+      result = result.filter((item) => {
+        const width = Number.parseInt(item.dimensions.split("×")[0]?.trim() ?? "0", 10);
+        if (advancedFilters.resolution === "4k") return width >= 3840;
+        if (advancedFilters.resolution === "hd") return width >= 1280 && width < 3840;
+        return width > 0 && width < 1280;
+      });
+    }
+    if (advancedFilters.status !== "any") {
+      result = result.filter((item) => item.status === advancedFilters.status);
+    }
+    if (advancedFilters.markerOnly) {
+      result = result.filter((item) => Boolean(item.markers?.length));
+    }
+    if (advancedFilters.duplicateOnly) {
+      result = result.filter((item) => Boolean(item.duplicateCount));
+    }
+    if (advancedFilters.favoriteOnly) {
+      result = result.filter((item) => item.favorite);
+    }
+    if (advancedFilters.dateFrom) {
+      result = result.filter((item) => !item.createdAt || item.createdAt >= `${advancedFilters.dateFrom}T00:00:00`);
+    }
+    if (advancedFilters.dateTo) {
+      result = result.filter((item) => !item.createdAt || item.createdAt <= `${advancedFilters.dateTo}T23:59:59`);
+    }
     if (sort === "name") result.sort((a, b) => a.title.localeCompare(b.title));
     return result;
-  }, [activeNav, filter, items, sort]);
+  }, [activeNav, advancedFilters, filter, items, sort]);
+
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id)),
+    [items, selectedIds]
+  );
+  const advancedFilterCount = countAdvancedFilters(advancedFilters);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -1027,10 +1298,12 @@ export function MediaWorkspace() {
       }
       if (!isTyping && event.key.toLowerCase() === "u") setUploadOpen(true);
       if (!isTyping && event.key.toLowerCase() === "q") setQuickMode((value) => !value);
+      if (!isTyping && event.key.toLowerCase() === "h") setHighlightsOpen(true);
       if (event.key === "Escape") {
         setUploadOpen(false);
         setCommandOpen(false);
         setQuickMode(false);
+        setFiltersOpen(false);
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -1099,6 +1372,47 @@ export function MediaWorkspace() {
       )
     );
     setToast(`“${tag}” aggiunto a ${selectedIds.size} media`);
+  };
+
+  const addMarker = (item: MediaItem, marker: HighlightMarker) => {
+    updateItem(item.id, (current) => ({
+      ...current,
+      markers: [...(current.markers ?? []), marker]
+    }));
+    setToast(`Momento “${marker.label}” aggiunto a ${item.title}`);
+    void fetch(`/api/media/${item.id}/markers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(marker)
+    }).catch(() => undefined);
+  };
+
+  const renameFile = (item: MediaItem, name: string) => {
+    const previousTitle = item.title;
+    updateItem(item.id, (current) => ({ ...current, title: name }));
+    setToast(`Rinomina di “${previousTitle}” in corso…`);
+    void fetch("/api/files/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mediaId: item.id, name, confirm: true })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as {
+          error?: string;
+          media?: { sourceFileName?: string };
+        } | null;
+        if (!response.ok) throw new Error(payload?.error ?? "Rinomina non riuscita");
+        updateItem(item.id, (current) => ({
+          ...current,
+          title: name,
+          sourceFileName: payload?.media?.sourceFileName ?? current.sourceFileName
+        }));
+        setToast(`File rinominato in “${name}”`);
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, title: previousTitle }));
+        setToast(error instanceof Error ? error.message : "Rinomina non riuscita");
+      });
   };
 
   const handleUpload = (files: File[]) => {
@@ -1192,6 +1506,12 @@ export function MediaWorkspace() {
       />
 
       <main className="main-content">
+        {activeNav === "Utenti & accessi" ? (
+          <UserManagement />
+        ) : activeNav === "Duplicati" ? (
+          <DuplicatesPanel />
+        ) : (
+          <>
         <section className="page-intro">
           <div>
             <p className="eyebrow">LUNEDÌ, 28 LUGLIO</p>
@@ -1241,6 +1561,15 @@ export function MediaWorkspace() {
           </div>
           <div className="toolbar-actions">
             <button
+              className="highlights-launch"
+              onClick={() => setHighlightsOpen(true)}
+              disabled={!visibleItems.some((item) => item.type === "video" && item.markers?.length)}
+            >
+              <Sparkles size={16} fill="currentColor" />
+              Momenti salienti
+              <kbd>H</kbd>
+            </button>
+            <button
               className={quickMode ? "quick-mode is-active" : "quick-mode"}
               onClick={() => setQuickMode((value) => !value)}
             >
@@ -1248,10 +1577,13 @@ export function MediaWorkspace() {
               Catalogazione rapida
               <kbd>Q</kbd>
             </button>
-            <button className="tool-button">
+            <button
+              className={advancedFilterCount ? "tool-button has-filters" : "tool-button"}
+              onClick={() => setFiltersOpen(true)}
+            >
               <SlidersHorizontal size={16} />
               Filtra
-              <span>2</span>
+              {advancedFilterCount ? <span>{advancedFilterCount}</span> : null}
             </button>
             <button
               className="tool-button sort-button"
@@ -1279,6 +1611,24 @@ export function MediaWorkspace() {
             </div>
           </div>
         </section>
+
+        {advancedFilterCount ? (
+          <div className="active-filter-bar">
+            <span><SlidersHorizontal size={14} /> Filtri attivi</span>
+            {[...advancedFilters.people, ...advancedFilters.tags, ...advancedFilters.groups].map((entry) => (
+              <button key={entry} onClick={() => setAdvancedFilters((current) => ({
+                ...current,
+                people: current.people.filter((value) => value !== entry),
+                tags: current.tags.filter((value) => value !== entry),
+                groups: current.groups.filter((value) => value !== entry)
+              }))}>{entry}<X size={12} /></button>
+            ))}
+            {advancedFilters.markerOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, markerOnly: false }))}>con marker<X size={12} /></button> : null}
+            {advancedFilters.duplicateOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, duplicateOnly: false }))}>duplicati<X size={12} /></button> : null}
+            {advancedFilters.favoriteOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, favoriteOnly: false }))}>preferiti<X size={12} /></button> : null}
+            <button className="clear-active-filters" onClick={() => setAdvancedFilters(emptyAdvancedFilters)}>Azzera tutto</button>
+          </div>
+        ) : null}
 
         {activeNav !== "Libreria" ? (
           <div className="context-banner">
@@ -1341,6 +1691,8 @@ export function MediaWorkspace() {
           <span>Mostrati {visibleItems.length} di 2.486 media</span>
           <button>Carica altri</button>
         </footer>
+          </>
+        )}
       </main>
 
       {inspected ? (
@@ -1349,6 +1701,9 @@ export function MediaWorkspace() {
           onClose={() => setInspected(null)}
           onFavorite={() => toggleFavorite(inspected)}
           onAddTag={(tag) => addTag(inspected, tag)}
+          onAddMarker={(marker) => addMarker(inspected, marker)}
+          onEdit={() => setEditorOpen(true)}
+          onRename={(name) => renameFile(inspected, name)}
         />
       ) : null}
 
@@ -1357,6 +1712,8 @@ export function MediaWorkspace() {
           count={selectedIds.size}
           onClear={() => setSelectedIds(new Set())}
           onAddTag={addTagToSelection}
+          onEdit={() => setEditorOpen(true)}
+          onOrganize={() => setOrganizerOpen(true)}
         />
       ) : null}
 
@@ -1365,6 +1722,49 @@ export function MediaWorkspace() {
         <CommandPalette
           onClose={() => setCommandOpen(false)}
           onOpenItem={(item) => setInspected(item)}
+        />
+      ) : null}
+      {filtersOpen ? (
+        <AdvancedFilters
+          value={advancedFilters}
+          people={people.map(({ name }) => name)}
+          tags={Array.from(new Set(items.flatMap((item) => item.tags))).slice(0, 12)}
+          groups={Array.from(new Set(items.map((item) => item.group))).slice(0, 10)}
+          resultCount={visibleItems.length}
+          onApply={setAdvancedFilters}
+          onClose={() => setFiltersOpen(false)}
+        />
+      ) : null}
+      {highlightsOpen ? (
+        <HighlightsPlayer
+          items={visibleItems}
+          filters={advancedFilters}
+          onClose={() => setHighlightsOpen(false)}
+          onOpenSource={(item) => {
+            setHighlightsOpen(false);
+            setInspected(item);
+          }}
+        />
+      ) : null}
+      {editorOpen ? (
+        <VideoEditorModal
+          items={
+            selectedItems.some((item) => item.type === "video")
+              ? selectedItems
+              : inspected?.type === "video"
+                ? [inspected]
+                : visibleItems.filter((item) => item.type === "video").slice(0, 3)
+          }
+          onClose={() => setEditorOpen(false)}
+          onCreated={setToast}
+        />
+      ) : null}
+      {organizerOpen ? (
+        <OrganizeFilesModal
+          items={selectedItems.length ? selectedItems : inspected ? [inspected] : []}
+          people={people.map(({ name }) => name)}
+          onClose={() => setOrganizerOpen(false)}
+          onComplete={setToast}
         />
       ) : null}
       {toast ? (

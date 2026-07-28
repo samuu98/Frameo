@@ -11,6 +11,15 @@ catalogare e riprodurre foto e video dal browser.
 - thumbnail, clip preview e playlist HLS per i video tramite FFmpeg
 - streaming HTTP con supporto `Range` per seek e riproduzione progressiva
 - PostgreSQL + Prisma per media, persone, tag, gruppi e job di elaborazione
+- filtri avanzati combinabili per persone, tag, gruppi, date, durata, risoluzione,
+  stato, preferiti, marker e duplicati
+- marker temporali e player Highlights infinito sulla vista filtrata, con ritorno
+  immediato al video sorgente
+- anteprima video automatica al passaggio del mouse
+- rilevamento duplicati esatti SHA-256 e somiglianze visuali tramite dHash
+- editor FFmpeg non distruttivo per tagliare, dividere e unire video
+- utenti, ruoli e regole ALLOW/DENY per media, persone, tag e gruppi
+- rinomina fisica e riorganizzazione sicura degli originali in cartelle reali
 - catalogazione rapida, selezione multipla, ricerca e pannello dettagli
 - modalità demo automatica quando non è configurato un database
 - immagine Docker singola più PostgreSQL in Docker Compose
@@ -61,6 +70,11 @@ flowchart LR
 Gli originali non vengono modificati. Ogni derivato è salvato in
 `storage/derived/<media-id>` e può essere rigenerato senza perdita.
 
+Le operazioni dell'editor generano nuovi originali sotto `storage/edited`. Lo
+spostamento fisico è invece intenzionalmente distruttivo sul vecchio path: richiede
+la conferma testuale `SPOSTA`, verifica che i path restino nello storage gestito,
+evita collisioni e ripristina il file se l'aggiornamento del database fallisce.
+
 ## Modello dati
 
 - `MediaAsset`: originale, derivati, stato, metadati tecnici
@@ -68,15 +82,40 @@ Gli originali non vengono modificati. Ogni derivato è salvato in
 - `Tag` / `MediaTag`: tassonomia libera many-to-many
 - `Group` / `GroupMedia`: raccolte ordinate
 - `ProcessingJob`: avanzamento, operazione ed eventuale errore
+- `HighlightMarker`: intervalli temporali riproducibili nel feed Highlights
+- `DuplicateMatch`: corrispondenze esatte o percettive e stato di revisione
+- `AppUser` / `AccessRule`: ruoli e ACL con precedenza delle regole DENY
+- `EditProject` / `EditSegment`: montaggi non distruttivi e sorgenti ordinate
+- `FileOperation`: audit degli spostamenti, copie e rinomine
 
 ## API principali
 
-- `GET /api/media` — elenco media, filtro opzionale `kind=image|video`
+- `GET /api/media` — elenco media e filtri avanzati server-side
 - `POST /api/media` — upload multipart di un file
 - `GET /api/media/:id` — dettaglio completo
 - `PATCH /api/media/:id` — titolo, note, preferito, tag, persone e gruppi
+- `GET|POST /api/media/:id/markers` — marker dei momenti salienti
+- `GET /api/highlights` — feed filtrato dei marker in evidenza
+- `GET|POST /api/duplicates` — revisione e nuova scansione duplicati
+- `GET|POST /api/editor` — progetti di taglio, split e merge
+- `POST /api/files/rename` — rinomina del file originale gestito
+- `POST /api/files/organize` — anteprima ed esecuzione MOVE/COPY
+- `GET|POST /api/users` — gestione utenti
+- `PATCH /api/users/:id` — ruolo, stato e ACL
 - `GET /api/stream/*` — originali, preview e segmenti HLS con byte range
 - `GET /api/health` — salute applicazione e database
+
+## Identità e permessi
+
+Il livello di autorizzazione è applicato a liste, dettagli, marker, editor e file
+streamati. L'identità corrente viene letta dal cookie `frameo_user` oppure
+dall'header `x-frameo-user-id`; senza identità esplicita viene usato il primo
+amministratore attivo. In produzione l'header deve essere impostato da un reverse
+proxy di autenticazione fidato, che rimuova ogni valore fornito dal client.
+
+Gli amministratori vedono e gestiscono tutto. I curatori possono modificare i
+contenuti visibili; i visualizzatori non vedono nulla finché non ricevono almeno
+una regola `ALLOW`. Una regola `DENY` prevale sempre su qualsiasi permesso.
 
 ## Scelte architetturali
 

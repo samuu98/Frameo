@@ -1,14 +1,13 @@
 import type { MediaItem } from "@/types/media";
 
-const image = (id: string, width = 1200) =>
-  `https://images.unsplash.com/${id}?auto=format&fit=crop&q=84&w=${width}`;
+const demoAsset = (name: string) => `/demo/${name}.svg`;
 
 export const demoMedia: MediaItem[] = [
   {
     id: "coastline-drive",
     title: "Coastline Drive",
     type: "video",
-    src: image("photo-1572668687203-e4c6d7331f48"),
+    src: demoAsset("coast"),
     accent: "#88A4A0",
     duration: "01:24",
     dimensions: "3840 × 2160",
@@ -21,13 +20,20 @@ export const demoMedia: MediaItem[] = [
     status: "ready",
     favorite: true,
     featured: true,
+    duplicateCount: 1,
+    durationMs: 84000,
+    originalUrl: null,
+    markers: [
+      { id: "mk-coast-1", label: "Curva sull'oceano", startMs: 12000, endMs: 20500, color: "#6D5DFB", featured: true },
+      { id: "mk-coast-2", label: "Golden light", startMs: 44200, endMs: 51700, color: "#E5A348", featured: true }
+    ],
     aspect: "wide"
   },
   {
     id: "stillness",
     title: "Stillness at 06:14",
     type: "image",
-    src: image("photo-1501785888041-af3ef285b470"),
+    src: demoAsset("mountain"),
     accent: "#89957D",
     dimensions: "6240 × 4160",
     size: "18.4 MB",
@@ -43,9 +49,10 @@ export const demoMedia: MediaItem[] = [
     id: "concrete-rhythm",
     title: "Concrete Rhythm",
     type: "video",
-    src: image("photo-1484882918957-e9f6567be3c8"),
+    src: demoAsset("city"),
     accent: "#777A80",
     duration: "00:42",
+    durationMs: 42000,
     dimensions: "4096 × 2160",
     size: "684 MB",
     date: "19 lug 2026",
@@ -54,13 +61,16 @@ export const demoMedia: MediaItem[] = [
     tags: ["architettura", "b&w"],
     group: "Urban studies",
     status: "ready",
+    markers: [
+      { id: "mk-concrete-1", label: "Geometria perfetta", startMs: 8200, endMs: 14800, color: "#36A27A", featured: true }
+    ],
     aspect: "portrait"
   },
   {
     id: "blue-hour",
     title: "Blue hour / Take 03",
     type: "image",
-    src: image("photo-1469474968028-56623f02e42e"),
+    src: demoAsset("mountain"),
     accent: "#71879D",
     dimensions: "5472 × 3648",
     size: "12.7 MB",
@@ -75,7 +85,7 @@ export const demoMedia: MediaItem[] = [
     id: "studio-elena",
     title: "Elena — Studio 04",
     type: "image",
-    src: image("photo-1494790108377-be9c29b29330"),
+    src: demoAsset("portrait"),
     accent: "#A98A78",
     dimensions: "4480 × 6720",
     size: "24.1 MB",
@@ -92,9 +102,10 @@ export const demoMedia: MediaItem[] = [
     id: "salt-and-air",
     title: "Salt & Air",
     type: "video",
-    src: image("photo-1550613097-fe6c2c321cd3"),
+    src: demoAsset("sea"),
     accent: "#637E85",
     duration: "02:08",
+    durationMs: 128000,
     dimensions: "3840 × 2160",
     size: "2.4 GB",
     date: "12 lug 2026",
@@ -102,13 +113,17 @@ export const demoMedia: MediaItem[] = [
     tags: ["mare", "surf", "slow motion"],
     group: "Summer reel",
     status: "ready",
+    markers: [
+      { id: "mk-salt-1", label: "Onda lunga", startMs: 31800, endMs: 40400, color: "#4B91D1", featured: true },
+      { id: "mk-salt-2", label: "Cutback", startMs: 79900, endMs: 86200, color: "#E76F51", featured: true }
+    ],
     aspect: "landscape"
   },
   {
     id: "facade-12",
     title: "Façade no. 12",
     type: "image",
-    src: image("photo-1558204741-b4539422787a"),
+    src: demoAsset("city"),
     accent: "#A5A398",
     dimensions: "6000 × 4000",
     size: "16.8 MB",
@@ -118,15 +133,17 @@ export const demoMedia: MediaItem[] = [
     tags: ["architettura", "texture"],
     group: "Urban studies",
     status: "ready",
+    duplicateCount: 1,
     aspect: "landscape"
   },
   {
     id: "first-light",
     title: "First Light",
     type: "video",
-    src: image("photo-1500530855697-b586d89ba3ee"),
+    src: demoAsset("coast"),
     accent: "#A48162",
     duration: "00:58",
+    durationMs: 58000,
     dimensions: "1920 × 1080",
     size: "412 MB",
     date: "08 lug 2026",
@@ -134,13 +151,16 @@ export const demoMedia: MediaItem[] = [
     tags: ["alba", "camera a mano"],
     group: "Shorts",
     status: "ready",
+    markers: [
+      { id: "mk-light-1", label: "Primo raggio", startMs: 4600, endMs: 11200, color: "#E5A348", featured: true }
+    ],
     aspect: "wide"
   },
   {
     id: "jonas-test",
     title: "Jonas / Light test",
     type: "image",
-    src: image("photo-1500648767791-00dcc994a43e"),
+    src: demoAsset("portrait"),
     accent: "#8E7569",
     dimensions: "4000 × 5000",
     size: "10.2 MB",
@@ -155,9 +175,10 @@ export const demoMedia: MediaItem[] = [
     id: "lake-house",
     title: "Lake House selects",
     type: "video",
-    src: image("photo-1470252649378-9c29740c9fa8"),
+    src: demoAsset("lake"),
     accent: "#8A9074",
     duration: "03:12",
+    durationMs: 192000,
     dimensions: "3840 × 2160",
     size: "3.1 GB",
     date: "02 lug 2026",
@@ -165,13 +186,16 @@ export const demoMedia: MediaItem[] = [
     tags: ["weekend", "friends"],
     group: "Lake House",
     status: "ready",
+    markers: [
+      { id: "mk-lake-1", label: "Tutti sul pontile", startMs: 56400, endMs: 65100, color: "#6D5DFB", featured: true }
+    ],
     aspect: "landscape"
   },
   {
     id: "transcode-queued",
     title: "CAM_A_0728",
     type: "video",
-    src: image("photo-1720972920504-76155d96782a"),
+    src: demoAsset("lake"),
     accent: "#787E75",
     duration: "—",
     dimensions: "3840 × 2160",
@@ -186,10 +210,10 @@ export const demoMedia: MediaItem[] = [
 ];
 
 export const people = [
-  { name: "Sofia", count: 128, src: image("photo-1494790108377-be9c29b29330", 200) },
-  { name: "Luca", count: 96, src: image("photo-1500648767791-00dcc994a43e", 200) },
-  { name: "Elena", count: 74, src: image("photo-1524504388940-b1c1722653e1", 200) },
-  { name: "Jonas", count: 51, src: image("photo-1506794778202-cad84cf45f1d", 200) }
+  { name: "Sofia", count: 128, src: demoAsset("avatar-sofia") },
+  { name: "Luca", count: 96, src: demoAsset("avatar-luca") },
+  { name: "Elena", count: 74, src: demoAsset("avatar-elena") },
+  { name: "Jonas", count: 51, src: demoAsset("avatar-jonas") }
 ];
 
 export const quickTags = [

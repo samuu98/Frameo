@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, UserRole } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -43,6 +43,21 @@ async function main() {
         where: { name },
         update: { description, accent },
         create: { name, description, accent }
+      })
+    )
+  );
+
+  const appUsers: Array<[string, string, UserRole]> = [
+    ["admin@frameo.local", "Sara Porta", UserRole.ADMIN],
+    ["elena@frameo.local", "Elena Riva", UserRole.CURATOR],
+    ["luca@frameo.local", "Luca Bianchi", UserRole.VIEWER]
+  ];
+  await Promise.all(
+    appUsers.map(([email, name, role]) =>
+      prisma.appUser.upsert({
+        where: { email },
+        update: { name, role, active: true },
+        create: { email, name, role, active: true }
       })
     )
   );

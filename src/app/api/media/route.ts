@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +7,9 @@ import Busboy from "busboy";
 import { MediaKind, MediaStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { registerDuplicateMatches } from "@/lib/duplicate-detector";
+import { getRequestUser, requireEditor } from "@/lib/access-control";
+import { buildMediaWhere } from "@/lib/media-filters";
 import { mediaToJson } from "@/lib/media-json";
 import { processMediaAsset } from "@/lib/media-processor";
 
@@ -22,7 +25,10 @@ const includeRelations = {
   tags: { include: { tag: true } },
   people: { include: { person: true } },
   groups: { include: { group: true } },
-  jobs: true
+  jobs: true,
+  markers: true,
+  duplicateSources: true,
+  duplicateCandidates: true
 } as const;
 
 export async function GET(request: Request) {
@@ -31,16 +37,11 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const kind = url.searchParams.get("kind");
   const take = Math.min(Number(url.searchParams.get("take") ?? 60), 200);
+  const user = await getRequestUser(request);
 
   const items = await prisma.mediaAsset.findMany({
-    where:
-      kind === "video"
-        ? { kind: MediaKind.VIDEO }
-        : kind === "image"
-          ? { kind: MediaKind.IMAGE }
-          : undefined,
+    where: buildMediaWhere(url, user),
     include: includeRelations,
     orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
     take
@@ -56,6 +57,7 @@ interface UploadResult {
   bytes: number;
   absolutePath: string;
   relativePath: string;
+  contentHash: string;
 }
 
 async function streamUpload(request: Request): Promise<UploadResult> {
@@ -69,7 +71,8 @@ async function streamUpload(request: Request): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     let resolved = false;
     let bytes = 0;
-    let result: Omit<UploadResult, "bytes"> | null = null;
+    const hash = createHash("sha256");
+    let result: Omit<UploadResult, "bytes" | "contentHash"> | null = null;
     const busboy = Busboy({
       headers: Object.fromEntries(request.headers.entries()),
       limits: { files: 1, fileSize: maxUploadBytes }
@@ -91,6 +94,7 @@ async function streamUpload(request: Request): Promise<UploadResult> {
 
       file.on("data", (chunk: Buffer) => {
         bytes += chunk.length;
+        hash.update(chunk);
       });
       file.on("limit", () => {
         reject(new Error(`File exceeds the ${maxUploadBytes} byte limit`));
@@ -109,7 +113,7 @@ async function streamUpload(request: Request): Promise<UploadResult> {
         reject(new Error("No file field was found"));
         return;
       }
-      resolve({ ...result, bytes });
+      resolve({ ...result, bytes, contentHash: hash.digest("hex") });
     });
 
     const body = Readable.fromWeb(request.body as never);
@@ -141,6 +145,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    await requireEditor(request);
     const uploaded = await streamUpload(request);
     const isVideo = uploaded.mimeType.startsWith("video/");
     const isImage = uploaded.mimeType.startsWith("image/");
@@ -159,17 +164,26 @@ export async function POST(request: Request) {
         status: MediaStatus.PROCESSING,
         mimeType: uploaded.mimeType,
         bytes: BigInt(uploaded.bytes),
-        originalPath: uploaded.relativePath
+        originalPath: uploaded.relativePath,
+        sourceFileName: uploaded.fileName,
+        contentHash: uploaded.contentHash,
+        directoryKey: "originals"
       },
       include: includeRelations
     });
 
+    void registerDuplicateMatches(media.id).catch((error) => {
+      console.error(`Exact duplicate scan failed for media ${media.id}`, error);
+    });
     void processMediaAsset(media.id).catch((error) => {
       console.error(`Processing failed for media ${media.id}`, error);
     });
 
     return NextResponse.json({ item: mediaToJson(media) }, { status: 202 });
   } catch (error) {
+    if (error instanceof Error && error.message === "EDITOR_REQUIRED") {
+      return NextResponse.json({ error: "Permessi di modifica richiesti" }, { status: 403 });
+    }
     const message = error instanceof Error ? error.message : "Upload non riuscito";
     return NextResponse.json({ error: message }, { status: 400 });
   }

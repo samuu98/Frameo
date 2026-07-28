@@ -26,35 +26,86 @@ enum JobState {
   FAILED
 }
 
+enum UserRole {
+  ADMIN
+  CURATOR
+  VIEWER
+}
+
+enum AccessEffect {
+  ALLOW
+  DENY
+}
+
+enum AccessScope {
+  ALL
+  MEDIA
+  PERSON
+  TAG
+  GROUP
+}
+
+enum DuplicateStatus {
+  OPEN
+  KEPT_BOTH
+  MERGED
+  DISMISSED
+}
+
+enum EditOperation {
+  TRIM
+  SPLIT
+  MERGE
+}
+
+enum FileOperationKind {
+  MOVE
+  COPY
+  RENAME
+}
+
 model MediaAsset {
-  id            String         @id @default(cuid())
-  title         String
-  description   String?
-  kind          MediaKind
-  status        MediaStatus    @default(PROCESSING)
-  mimeType      String
-  bytes         BigInt
-  width         Int?
-  height        Int?
-  durationMs    Int?
-  capturedAt    DateTime?
-  originalPath  String
-  thumbnailPath String?
-  previewPath   String?
-  streamPath    String?
-  dominantColor String?
-  favorite      Boolean        @default(false)
-  rating        Int            @default(0)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  people        MediaPerson[]
-  tags          MediaTag[]
-  groups        GroupMedia[]
-  jobs          ProcessingJob[]
+  id                  String            @id @default(cuid())
+  title               String
+  description         String?
+  kind                MediaKind
+  status              MediaStatus       @default(PROCESSING)
+  mimeType            String
+  bytes               BigInt
+  width               Int?
+  height              Int?
+  durationMs          Int?
+  capturedAt          DateTime?
+  originalPath        String
+  thumbnailPath       String?
+  previewPath         String?
+  streamPath          String?
+  dominantColor       String?
+  sourceFileName      String?
+  contentHash         String?
+  perceptualHash      String?
+  directoryKey        String?
+  favorite            Boolean           @default(false)
+  rating              Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  people              MediaPerson[]
+  tags                MediaTag[]
+  groups              GroupMedia[]
+  jobs                ProcessingJob[]
+  markers             HighlightMarker[]
+  duplicateSources    DuplicateMatch[]  @relation("DuplicateSource")
+  duplicateCandidates DuplicateMatch[]  @relation("DuplicateCandidate")
+  editSegments        EditSegment[]
+  editOutputs         EditProject[]     @relation("EditOutput")
+  fileOperations      FileOperation[]
 
   @@index([kind, status])
   @@index([createdAt])
   @@index([capturedAt])
+  @@index([contentHash])
+  @@index([perceptualHash])
+  @@index([directoryKey])
 }
 
 model Person {
@@ -121,16 +172,135 @@ model GroupMedia {
 }
 
 model ProcessingJob {
-  id        String      @id @default(cuid())
+  id        String     @id @default(cuid())
   mediaId   String
   operation String
-  state     JobState    @default(PENDING)
-  progress  Int         @default(0)
+  state     JobState   @default(PENDING)
+  progress  Int        @default(0)
   error     String?
   startedAt DateTime?
   endedAt   DateTime?
-  createdAt DateTime    @default(now())
-  media     MediaAsset  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([state, createdAt])
+  @@index([mediaId])
+}
+
+model AppUser {
+  id             String            @id @default(cuid())
+  email          String            @unique
+  name           String
+  avatarUrl      String?
+  role           UserRole          @default(VIEWER)
+  active         Boolean           @default(true)
+  lastSeenAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  accessRules    AccessRule[]
+  markers        HighlightMarker[]
+  editProjects   EditProject[]
+  fileOperations FileOperation[]
+}
+
+model AccessRule {
+  id        String       @id @default(cuid())
+  userId    String
+  effect    AccessEffect
+  scope     AccessScope
+  targetId  String?
+  label     String?
+  createdAt DateTime     @default(now())
+  user      AppUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, effect])
+  @@index([scope, targetId])
+}
+
+model HighlightMarker {
+  id          String     @id @default(cuid())
+  mediaId     String
+  label       String
+  startMs     Int
+  endMs       Int
+  color       String     @default("#6D5DFB")
+  note        String?
+  featured    Boolean    @default(true)
+  createdById String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  media       MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  createdBy   AppUser?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([mediaId, startMs])
+  @@index([featured, createdAt])
+}
+
+model DuplicateMatch {
+  id               String          @id @default(cuid())
+  sourceMediaId    String
+  candidateMediaId String
+  similarity       Float
+  reason           String
+  status           DuplicateStatus @default(OPEN)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  source           MediaAsset      @relation("DuplicateSource", fields: [sourceMediaId], references: [id], onDelete: Cascade)
+  candidate        MediaAsset      @relation("DuplicateCandidate", fields: [candidateMediaId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceMediaId, candidateMediaId])
+  @@index([status, similarity])
+  @@index([candidateMediaId])
+}
+
+model EditProject {
+  id             String        @id @default(cuid())
+  name           String
+  operation      EditOperation
+  state          JobState      @default(PENDING)
+  progress       Int           @default(0)
+  outputFileName String?
+  outputMediaId  String?       @unique
+  createdById    String?
+  error          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  createdBy      AppUser?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  outputMedia    MediaAsset?   @relation("EditOutput", fields: [outputMediaId], references: [id], onDelete: SetNull)
+  segments       EditSegment[]
+
+  @@index([state, createdAt])
+}
+
+model EditSegment {
+  id        String      @id @default(cuid())
+  projectId String
+  mediaId   String
+  startMs   Int         @default(0)
+  endMs     Int
+  sortOrder Int         @default(0)
+  project   EditProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  media     MediaAsset  @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, sortOrder])
+  @@index([mediaId])
+}
+
+model FileOperation {
+  id             String            @id @default(cuid())
+  kind           FileOperationKind
+  state          JobState          @default(PENDING)
+  mediaId        String?
+  sourcePath     String
+  targetPath     String
+  removeOriginal Boolean           @default(false)
+  confirmedAt    DateTime?
+  createdById    String?
+  error          String?
+  createdAt      DateTime          @default(now())
+  endedAt        DateTime?
+  media          MediaAsset?       @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  createdBy      AppUser?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([state, createdAt])
   @@index([mediaId])
