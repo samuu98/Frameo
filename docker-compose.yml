@@ -1,0 +1,44 @@
+services:
+  frameo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://frameo:frameo@postgres:5432/frameo?schema=public
+      STORAGE_ROOT: /app/storage
+      MAX_UPLOAD_BYTES: "5368709120"
+      DEMO_MODE: "false"
+      NEXT_PUBLIC_APP_NAME: Frameo
+    volumes:
+      - frameo_media:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: frameo
+      POSTGRES_USER: frameo
+      POSTGRES_PASSWORD: frameo
+    volumes:
+      - frameo_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U frameo -d frameo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  frameo_media:
+  frameo_postgres:

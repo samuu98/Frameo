@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+}
+
+enum MediaStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  ERROR
+}
+
+enum JobState {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model MediaAsset {
+  id            String         @id @default(cuid())
+  title         String
+  description   String?
+  kind          MediaKind
+  status        MediaStatus    @default(PROCESSING)
+  mimeType      String
+  bytes         BigInt
+  width         Int?
+  height        Int?
+  durationMs    Int?
+  capturedAt    DateTime?
+  originalPath  String
+  thumbnailPath String?
+  previewPath   String?
+  streamPath    String?
+  dominantColor String?
+  favorite      Boolean        @default(false)
+  rating        Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  people        MediaPerson[]
+  tags          MediaTag[]
+  groups        GroupMedia[]
+  jobs          ProcessingJob[]
+
+  @@index([kind, status])
+  @@index([createdAt])
+  @@index([capturedAt])
+}
+
+model Person {
+  id        String        @id @default(cuid())
+  name      String
+  avatarUrl String?
+  createdAt DateTime      @default(now())
+  media     MediaPerson[]
+
+  @@unique([name])
+}
+
+model MediaPerson {
+  mediaId    String
+  personId   String
+  confidence Float?
+  region     Json?
+  media      MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  person     Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, personId])
+  @@index([personId])
+}
+
+model Tag {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  color     String     @default("#8B5CF6")
+  createdAt DateTime   @default(now())
+  media     MediaTag[]
+}
+
+model MediaTag {
+  mediaId String
+  tagId   String
+  media   MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  tag     Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, tagId])
+  @@index([tagId])
+}
+
+model Group {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  accent      String       @default("#F97316")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  media       GroupMedia[]
+
+  @@unique([name])
+}
+
+model GroupMedia {
+  groupId   String
+  mediaId   String
+  sortOrder Int        @default(0)
+  group     Group      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, mediaId])
+  @@index([mediaId])
+}
+
+model ProcessingJob {
+  id        String      @id @default(cuid())
+  mediaId   String
+  operation String
+  state     JobState    @default(PENDING)
+  progress  Int         @default(0)
+  error     String?
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime    @default(now())
+  media     MediaAsset  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@index([state, createdAt])
+  @@index([mediaId])
+}
