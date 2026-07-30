@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { JobState, MediaKind, MediaStatus } from "@prisma/client";
+import { ImportState, JobState, MediaKind, MediaStatus } from "@prisma/client";
 import { refreshPerceptualHash } from "@/lib/duplicate-detector";
 import { prisma } from "@/lib/prisma";
 
@@ -320,14 +320,25 @@ export async function processMediaAsset(mediaId: string, existingJobId?: string)
       await processImage(mediaId, job.id, inputPath, outputDir);
     }
 
-    await prisma.processingJob.update({
-      where: { id: job.id },
-      data: {
-        state: JobState.COMPLETED,
-        progress: 100,
-        endedAt: new Date()
-      }
-    });
+    await Promise.all([
+      prisma.processingJob.update({
+        where: { id: job.id },
+        data: {
+          state: JobState.COMPLETED,
+          progress: 100,
+          endedAt: new Date()
+        }
+      }),
+      prisma.importAttempt.updateMany({
+        where: { mediaId },
+        data: {
+          state: ImportState.READY,
+          progress: 100,
+          error: null,
+          completedAt: new Date()
+        }
+      })
+    ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown processing error";
     await Promise.all([
@@ -341,6 +352,14 @@ export async function processMediaAsset(mediaId: string, existingJobId?: string)
           state: JobState.FAILED,
           error: message.slice(0, 4000),
           endedAt: new Date()
+        }
+      }),
+      prisma.importAttempt.updateMany({
+        where: { mediaId },
+        data: {
+          state: ImportState.FAILED,
+          error: message.slice(0, 4000),
+          completedAt: new Date()
         }
       })
     ]);

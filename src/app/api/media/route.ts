@@ -4,7 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import Busboy from "busboy";
-import { MediaKind, MediaStatus } from "@prisma/client";
+import { ImportState, MediaKind, MediaStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { registerDuplicateMatches } from "@/lib/duplicate-detector";
@@ -92,10 +92,9 @@ interface UploadResult {
   contentHash: string;
 }
 
-async function streamUpload(request: Request): Promise<UploadResult> {
+async function streamUpload(request: Request, id: string): Promise<UploadResult> {
   if (!request.body) throw new Error("Upload body is empty");
 
-  const id = randomUUID();
   const settings = await getLibrarySettings();
   const uploadRoot = resolveStorageFolder(settings.uploadFolder);
   const uploadDir = path.join(uploadRoot, id);
@@ -107,6 +106,8 @@ async function streamUpload(request: Request): Promise<UploadResult> {
     let busboyFinished = false;
     let outputFinished = false;
     let bytes = 0;
+    let lastReportedAt = 0;
+    let progressUpdates = Promise.resolve();
     const hash = createHash("sha256");
     let result: Omit<UploadResult, "bytes" | "contentHash"> | null = null;
     const busboy = Busboy({
@@ -118,13 +119,29 @@ async function streamUpload(request: Request): Promise<UploadResult> {
       if (settled) return;
       settled = true;
       const reason = error instanceof Error ? error : new Error(String(error));
-      void rm(uploadDir, { recursive: true, force: true }).finally(() => reject(reason));
+      void Promise.all([
+        rm(uploadDir, { recursive: true, force: true }),
+        prisma.importAttempt.updateMany({
+          where: { id },
+          data: {
+            state: ImportState.FAILED,
+            error: reason.message.slice(0, 4000),
+            uploadedBytes: BigInt(bytes),
+            completedAt: new Date()
+          }
+        })
+      ]).finally(() => reject(reason));
     };
 
     const finish = () => {
       if (settled || !busboyFinished || !outputFinished || !result) return;
+      const completed = result;
       settled = true;
-      resolve({ ...result, bytes, contentHash: hash.digest("hex") });
+      progressUpdates
+        .catch(() => undefined)
+        .finally(() =>
+          resolve({ ...completed, bytes, contentHash: hash.digest("hex") })
+        );
     };
 
     busboy.on("file", (_fieldName, file, info) => {
@@ -140,10 +157,33 @@ async function streamUpload(request: Request): Promise<UploadResult> {
         absolutePath,
         relativePath
       };
+      progressUpdates = progressUpdates
+        .then(() =>
+          prisma.importAttempt.update({
+            where: { id },
+            data: { fileName, mimeType: info.mimeType || null }
+          })
+        )
+        .then(() => undefined)
+        .catch(() => undefined);
 
       file.on("data", (chunk: Buffer) => {
         bytes += chunk.length;
         hash.update(chunk);
+        const now = Date.now();
+        if (now - lastReportedAt >= 500) {
+          lastReportedAt = now;
+          const uploadedBytes = BigInt(bytes);
+          progressUpdates = progressUpdates
+            .then(() =>
+              prisma.importAttempt.updateMany({
+                where: { id, state: ImportState.UPLOADING },
+                data: { uploadedBytes }
+              })
+            )
+            .then(() => undefined)
+            .catch(() => undefined);
+        }
       });
       file.on("limit", () => {
         fail(new Error(`File exceeds the ${maxUploadBytes} byte limit`));
@@ -196,12 +236,53 @@ export async function POST(request: Request) {
     );
   }
 
+  let trackedImportId: string | null = null;
+  let uploadedDirectory: string | null = null;
   try {
     await requireEditor(request);
-    const uploaded = await streamUpload(request);
+    const requestedId = request.headers.get("x-frameo-import-id");
+    const importId =
+      requestedId && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(requestedId)
+        ? requestedId
+        : randomUUID();
+    const encodedName = request.headers.get("x-frameo-file-name") ?? "";
+    let requestedName = "File in preparazione";
+    try {
+      requestedName = decodeURIComponent(encodedName) || requestedName;
+    } catch {
+      requestedName = encodedName || requestedName;
+    }
+    const requestedBytes = Number(request.headers.get("x-frameo-file-size") ?? 0);
+    await prisma.importAttempt.create({
+      data: {
+        id: importId,
+        fileName: requestedName.slice(0, 255),
+        totalBytes: BigInt(
+          Number.isFinite(requestedBytes) && requestedBytes > 0
+            ? Math.round(requestedBytes)
+            : 0
+        )
+      }
+    });
+    trackedImportId = importId;
+
+    const uploaded = await streamUpload(request, importId);
+    uploadedDirectory = path.dirname(uploaded.absolutePath);
     const isVideo = uploaded.mimeType.startsWith("video/");
     const isImage = uploaded.mimeType.startsWith("image/");
     if (!isVideo && !isImage) {
+      await Promise.all([
+        rm(path.dirname(uploaded.absolutePath), { recursive: true, force: true }),
+        prisma.importAttempt.update({
+          where: { id: importId },
+          data: {
+            state: ImportState.FAILED,
+            uploadedBytes: BigInt(uploaded.bytes),
+            error: "Formato non supportato",
+            completedAt: new Date()
+          }
+        })
+      ]);
       return NextResponse.json(
         { error: "Sono accettati soltanto file immagine o video." },
         { status: 415 }
@@ -223,6 +304,17 @@ export async function POST(request: Request) {
       },
       include: includeRelations
     });
+    await prisma.importAttempt.update({
+      where: { id: importId },
+      data: {
+        state: ImportState.PROCESSING,
+        progress: 100,
+        uploadedBytes: BigInt(uploaded.bytes),
+        totalBytes: BigInt(uploaded.bytes),
+        mediaId: media.id,
+        error: null
+      }
+    });
 
     void registerDuplicateMatches(media.id).catch((error) => {
       console.error(`Exact duplicate scan failed for media ${media.id}`, error);
@@ -237,6 +329,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Permessi di modifica richiesti" }, { status: 403 });
     }
     const message = error instanceof Error ? error.message : "Upload non riuscito";
+    await Promise.all([
+      trackedImportId
+        ? prisma.importAttempt.updateMany({
+            where: { id: trackedImportId },
+            data: {
+              state: ImportState.FAILED,
+              error: message.slice(0, 4000),
+              completedAt: new Date()
+            }
+          })
+        : Promise.resolve(),
+      uploadedDirectory
+        ? rm(uploadedDirectory, { recursive: true, force: true })
+        : Promise.resolve()
+    ]).catch(() => undefined);
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

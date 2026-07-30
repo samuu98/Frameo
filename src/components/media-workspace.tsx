@@ -126,6 +126,11 @@ interface PersonFacets {
   groups: Array<{ id: string; name: string; color: string; count: number }>;
 }
 
+interface SkippedImportFile {
+  file: File;
+  reason: string;
+}
+
 const formatBytes = (bytes: number) => {
   if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
@@ -159,6 +164,7 @@ const processingLabel = (operation?: string) =>
 
 const uploadMedia = (
   file: File,
+  importId: string,
   onProgress: (progress: number) => void
 ) =>
   new Promise<{ item?: PersistedMediaRecord }>((resolve, reject) => {
@@ -167,6 +173,9 @@ const uploadMedia = (
     body.append("file", file);
     request.open("POST", "/api/media");
     request.responseType = "json";
+    request.setRequestHeader("x-frameo-import-id", importId);
+    request.setRequestHeader("x-frameo-file-name", encodeURIComponent(file.name));
+    request.setRequestHeader("x-frameo-file-size", String(file.size));
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) {
         onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
@@ -213,6 +222,14 @@ const readVideoDuration = (file: File) =>
     video.onerror = () => finish(null);
     video.src = source;
   });
+
+const originalAspectRatio = (dimensions: string) => {
+  const match = dimensions.match(/^(\d+)\s*[×x]\s*(\d+)$/);
+  if (!match) return undefined;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 ? `${width} / ${height}` : undefined;
+};
 
 const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): MediaItem => {
   const latestJob = [...(item.jobs ?? [])].sort(
@@ -716,7 +733,13 @@ function MediaCard({
       }}
       onPointerLeave={() => setPreviewing(false)}
     >
-      <div className="media-visual" style={{ backgroundColor: item.accent }}>
+      <div
+        className="media-visual"
+        style={{
+          backgroundColor: item.accent,
+          aspectRatio: originalAspectRatio(item.dimensions)
+        }}
+      >
         {needsVisualPlaceholder ? (
           <div className="video-card-placeholder">
             {item.type === "video" ? <Film size={28} /> : <ImageIcon size={28} />}
@@ -1340,7 +1363,7 @@ function UploadModal({
   onUpload
 }: {
   onClose: () => void;
-  onUpload: (files: File[]) => void;
+  onUpload: (files: File[], skipped: SkippedImportFile[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -1422,6 +1445,12 @@ function UploadModal({
     (_, index) => !duplicateChecks[index]?.duplicate || forcedDuplicates.has(index)
   );
   const duplicateCount = duplicateChecks.filter(({ duplicate }) => duplicate).length;
+  const skippedFiles = files.flatMap((file, index) => {
+    const check = duplicateChecks[index];
+    return check?.duplicate && !forcedDuplicates.has(index)
+      ? [{ file, reason: check.reason ?? "File già presente in libreria" }]
+      : [];
+  });
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1556,13 +1585,17 @@ function UploadModal({
             <button onClick={onClose}>Annulla</button>
             <button
               className="confirm-upload"
-              disabled={!filesToImport.length || checking}
+              disabled={!files.length || checking}
               onClick={() => {
-                onUpload(filesToImport);
+                onUpload(filesToImport, skippedFiles);
                 onClose();
               }}
             >
-              {checking ? "Verifica…" : `Importa ${filesToImport.length || ""}`}
+              {checking
+                ? "Verifica…"
+                : filesToImport.length
+                  ? `Importa ${filesToImport.length}`
+                  : "Conferma verifica"}
               <ArrowRightIcon />
             </button>
           </div>
@@ -2411,12 +2444,37 @@ export function MediaWorkspace() {
     setToast(`“${captured.title}” salvato nella libreria`);
   };
 
-  const handleUpload = (files: File[]) => {
+  const handleUpload = (files: File[], skipped: SkippedImportFile[] = []) => {
+    if (skipped.length) {
+      void fetch("/api/media/imports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          files: skipped.map(({ file, reason }) => ({
+            name: file.name,
+            mimeType: file.type,
+            bytes: file.size,
+            reason
+          }))
+        })
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error("Registrazione dei duplicati non riuscita");
+        })
+        .catch((error) =>
+          setToast(
+            error instanceof Error
+              ? error.message
+              : "Registrazione dei duplicati non riuscita"
+          )
+        );
+    }
+    const importIds = files.map(() => crypto.randomUUID());
     const created = files.map((file, index): MediaItem => {
       const localUrl = URL.createObjectURL(file);
       const isVideo = file.type.startsWith("video");
       return {
-        id: `local-${Date.now()}-${index}`,
+        id: `local-${importIds[index]}`,
         title: file.name.replace(/\.[^/.]+$/, ""),
         type: isVideo ? "video" : "image",
         src: localUrl,
@@ -2437,7 +2495,11 @@ export function MediaWorkspace() {
       };
     });
     setItems((current) => [...created, ...current]);
-    setToast(`${files.length} ${files.length === 1 ? "file importato" : "file importati"} · elaborazione avviata`);
+    setToast(
+      files.length
+        ? `${files.length} ${files.length === 1 ? "import avviato" : "import avviati"}${skipped.length ? ` · ${skipped.length} già presenti` : ""}`
+        : `${skipped.length} ${skipped.length === 1 ? "file già presente" : "file già presenti"} · nessun duplicato importato`
+    );
 
     let nextUpload = 0;
     const uploadNext = async () => {
@@ -2447,7 +2509,7 @@ export function MediaWorkspace() {
         const file = files[index];
         const localItem = created[index];
         try {
-          const payload = await uploadMedia(file, (progress) => {
+          const payload = await uploadMedia(file, importIds[index], (progress) => {
             updateItem(localItem.id, (current) => ({
               ...current,
               processingProgress: progress,

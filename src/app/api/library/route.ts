@@ -73,7 +73,8 @@ async function libraryPayload() {
     videosWithoutThumbnail,
     videosWithoutPreview,
     imagesWithoutThumbnail,
-    folders
+    folders,
+    imports
   ] = await Promise.all([
     prisma.mediaAsset.count(),
     prisma.mediaAsset.count({ where: { kind: MediaKind.VIDEO } }),
@@ -87,7 +88,31 @@ async function libraryPayload() {
     prisma.mediaAsset.count({
       where: { kind: MediaKind.IMAGE, thumbnailPath: null }
     }),
-    availableFolders()
+    availableFolders(),
+    prisma.importAttempt.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        media: {
+          select: {
+            id: true,
+            title: true,
+            kind: true,
+            status: true,
+            jobs: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                operation: true,
+                state: true,
+                progress: true,
+                error: true
+              }
+            }
+          }
+        }
+      }
+    })
   ]);
 
   return {
@@ -107,7 +132,43 @@ async function libraryPayload() {
       imagesWithoutThumbnail
     },
     scan: getExternalScanStatus(),
-    previews: getPreviewQueueStatus()
+    previews: getPreviewQueueStatus(),
+    imports: imports.map((attempt) => {
+      const latestJob = attempt.media?.jobs[0] ?? null;
+      const uploadProgress =
+        attempt.totalBytes > 0
+          ? Math.round(
+              (Number(attempt.uploadedBytes) / Number(attempt.totalBytes)) * 100
+            )
+          : attempt.progress;
+      return {
+        id: attempt.id,
+        fileName: attempt.fileName,
+        mimeType: attempt.mimeType,
+        totalBytes: attempt.totalBytes.toString(),
+        uploadedBytes: attempt.uploadedBytes.toString(),
+        state: attempt.state,
+        progress:
+          attempt.state === "PROCESSING"
+            ? latestJob?.progress ?? 0
+            : attempt.state === "READY"
+              ? 100
+              : Math.max(0, Math.min(100, uploadProgress)),
+        stage: latestJob?.operation ?? null,
+        error: attempt.error ?? latestJob?.error ?? null,
+        createdAt: attempt.createdAt,
+        updatedAt: attempt.updatedAt,
+        completedAt: attempt.completedAt,
+        media: attempt.media
+          ? {
+              id: attempt.media.id,
+              title: attempt.media.title,
+              kind: attempt.media.kind,
+              status: attempt.media.status
+            }
+          : null
+      };
+    })
   };
 }
 

@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Save,
   Square,
-  StopCircle
+  StopCircle,
+  Upload
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -55,6 +56,26 @@ interface LibraryPayload {
     currentTitle: string | null;
     error: string | null;
   };
+  imports: Array<{
+    id: string;
+    fileName: string;
+    mimeType: string | null;
+    totalBytes: string;
+    uploadedBytes: string;
+    state: "UPLOADING" | "PROCESSING" | "READY" | "SKIPPED" | "FAILED";
+    progress: number;
+    stage: string | null;
+    error: string | null;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    media: {
+      id: string;
+      title: string;
+      kind: "IMAGE" | "VIDEO";
+      status: "UPLOADING" | "PROCESSING" | "READY" | "ERROR";
+    } | null;
+  }>;
 }
 
 interface StashSyncPayload {
@@ -74,6 +95,31 @@ interface StashSyncPayload {
 }
 
 const number = (value: number) => value.toLocaleString("it-IT");
+const bytes = (value: string) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "dimensione non disponibile";
+  if (amount < 1024 ** 2) return `${Math.max(1, Math.round(amount / 1024))} KB`;
+  if (amount < 1024 ** 3) return `${(amount / 1024 ** 2).toFixed(1)} MB`;
+  return `${(amount / 1024 ** 3).toFixed(1)} GB`;
+};
+const importStateLabel: Record<LibraryPayload["imports"][number]["state"], string> = {
+  UPLOADING: "Caricamento",
+  PROCESSING: "Elaborazione",
+  READY: "Completato",
+  SKIPPED: "Già presente",
+  FAILED: "Errore"
+};
+const importStageLabel: Record<string, string> = {
+  queued: "In coda",
+  "image:analyze": "Analisi immagine",
+  "image:thumbnail": "Miniatura immagine",
+  "image:preview": "Anteprima immagine",
+  "video:analyze": "Analisi video",
+  "video:thumbnail": "Miniatura video",
+  "video:preview": "Anteprima video",
+  "video:stream": "Preparazione streaming",
+  finalizing: "Finalizzazione"
+};
 
 export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
   const [data, setData] = useState<LibraryPayload | null>(null);
@@ -114,13 +160,17 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
   }, [load, loadStash]);
 
   useEffect(() => {
-    if (!data?.scan.running && !data?.previews.running && !stashSync?.running) return;
+    const activeImport = data?.imports.some(
+      ({ state }) => state === "UPLOADING" || state === "PROCESSING"
+    );
     const interval = window.setInterval(() => {
       void load().then(onChanged).catch(() => undefined);
       void loadStash();
-    }, 2500);
+    }, activeImport || data?.scan.running || data?.previews.running || stashSync?.running
+      ? 2500
+      : 5000);
     return () => window.clearInterval(interval);
-  }, [data?.previews.running, data?.scan.running, load, loadStash, onChanged, stashSync?.running]);
+  }, [data, load, loadStash, onChanged, stashSync?.running]);
 
   const visibleFolders = useMemo(() => {
     const query = folderQuery.trim().toLocaleLowerCase("it");
@@ -270,6 +320,77 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
           <p><strong>{number(data.stats.videosWithoutThumbnail)}</strong><span>Miniature video mancanti</span></p>
         </div>
       </div>
+
+      <article className="import-activity-card">
+        <header>
+          <span><Upload size={20} /></span>
+          <div>
+            <h3>Stato importazioni</h3>
+            <p>
+              Caricamenti, elaborazioni e file esclusi dal controllo duplicati.
+              Lo storico resta visibile anche dopo aver cambiato schermata.
+            </p>
+          </div>
+          <em>
+            {data.imports.filter(({ state }) =>
+              state === "UPLOADING" || state === "PROCESSING"
+            ).length} attivi
+          </em>
+        </header>
+        {data.imports.length ? (
+          <div className="import-activity-list">
+            {data.imports.slice(0, 30).map((entry) => {
+              const active = entry.state === "UPLOADING" || entry.state === "PROCESSING";
+              const stage = entry.stage
+                ? importStageLabel[entry.stage] ?? entry.stage
+                : entry.state === "UPLOADING"
+                  ? "Trasferimento al server"
+                  : null;
+              return (
+                <div className={`import-activity-row is-${entry.state.toLowerCase()}`} key={entry.id}>
+                  <span className="import-kind">
+                    {entry.mimeType?.startsWith("video/") || entry.media?.kind === "VIDEO"
+                      ? <Film size={18} />
+                      : <ImageIcon size={18} />}
+                  </span>
+                  <div className="import-copy">
+                    <strong title={entry.fileName}>{entry.fileName}</strong>
+                    <small>
+                      {bytes(entry.totalBytes)} · {new Intl.DateTimeFormat("it-IT", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      }).format(new Date(entry.createdAt))}
+                      {stage ? ` · ${stage}` : ""}
+                    </small>
+                    {active ? (
+                      <span className="import-progress">
+                        <i style={{ width: `${entry.progress}%` }} />
+                      </span>
+                    ) : null}
+                    {entry.error ? (
+                      <small className={entry.state === "SKIPPED" ? "import-note" : "import-error"}>
+                        {entry.error}
+                      </small>
+                    ) : null}
+                  </div>
+                  <div className="import-state">
+                    {active ? <LoaderCircle className="is-spinning" size={14} /> : null}
+                    <span>{importStateLabel[entry.state]}</span>
+                    {active ? <strong>{entry.progress}%</strong> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-import-activity">
+            <Upload size={22} />
+            <p>Nessuna importazione registrata. I prossimi tentativi appariranno qui.</p>
+          </div>
+        )}
+      </article>
 
       <div className="library-management-grid">
         <article className="library-settings-card">

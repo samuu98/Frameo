@@ -64,6 +64,14 @@ enum FileOperationKind {
   RENAME
 }
 
+enum ImportState {
+  UPLOADING
+  PROCESSING
+  READY
+  SKIPPED
+  FAILED
+}
+
 model MediaAsset {
   id                  String            @id @default(cuid())
   title               String
@@ -103,6 +111,7 @@ model MediaAsset {
   editOutputs         EditProject[]     @relation("EditOutput")
   fileOperations      FileOperation[]
   personReferences    PersonReferenceImage[]
+  importAttempt       ImportAttempt?
   sourceMedia         MediaAsset?       @relation("VideoScreenshots", fields: [sourceMediaId], references: [id], onDelete: SetNull)
   screenshots         MediaAsset[]      @relation("VideoScreenshots")
 
@@ -113,6 +122,25 @@ model MediaAsset {
   @@index([perceptualHash])
   @@index([directoryKey])
   @@index([sourceMediaId, sourceTimeMs])
+}
+
+model ImportAttempt {
+  id            String      @id
+  fileName      String
+  mimeType      String?
+  totalBytes    BigInt      @default(0)
+  uploadedBytes BigInt      @default(0)
+  progress      Int         @default(0)
+  state         ImportState @default(UPLOADING)
+  mediaId       String?     @unique
+  error         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  completedAt   DateTime?
+  media         MediaAsset? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([state, createdAt])
+  @@index([createdAt])
 }
 
 model Person {
