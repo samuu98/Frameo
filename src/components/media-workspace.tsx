@@ -91,9 +91,9 @@ const navItems = [
 ];
 
 const organizeItems = [
-  { label: "Persone", icon: UsersRound },
-  { label: "Tag", icon: Tag },
-  { label: "Gruppi", icon: Layers3 }
+  { label: "Performer", value: "Persone", icon: UsersRound },
+  { label: "Tag", value: "Tag", icon: Tag },
+  { label: "Collezioni", value: "Gruppi", icon: Layers3 }
 ];
 
 const adminItems = [
@@ -333,11 +333,11 @@ function Sidebar({
         ))}
 
         <p className="nav-caption nav-caption-spaced">Organizza</p>
-        {organizeItems.map(({ label, icon: Icon }) => (
+        {organizeItems.map(({ label, value, icon: Icon }) => (
           <button
-            className={active === label ? "nav-item is-active" : "nav-item"}
-            key={label}
-            onClick={() => onNavigate(label)}
+            className={active === value ? "nav-item is-active" : "nav-item"}
+            key={value}
+            onClick={() => onNavigate(value)}
           >
             <Icon size={18} />
             <span>{label}</span>
@@ -360,7 +360,7 @@ function Sidebar({
 
       {people.length ? <div className="sidebar-people">
         <div className="sidebar-section-title">
-          <span>Volti frequenti</span>
+          <span>Performer frequenti</span>
           <button aria-label="Vedi tutte le persone">
             <ChevronRight size={15} />
           </button>
@@ -524,11 +524,11 @@ function TaxonomyManager({
         <div>
           <span>{isPeople ? <UsersRound size={17} /> : <Tag size={17} />}</span>
           <div>
-            <strong>{isPeople ? "Persone" : "Tag"}</strong>
+          <strong>{isPeople ? "Performer" : "Tag"}</strong>
             <small>
               {entries.length
-                ? `${entries.length} ${isPeople ? "persone" : "tag"} disponibili`
-                : `Crea il primo ${isPeople ? "profilo" : "tag"}`}
+                ? `${entries.length} ${isPeople ? "performer" : "tag"} nel catalogo`
+                : `Crea il primo ${isPeople ? "performer" : "tag"}`}
             </small>
           </div>
         </div>
@@ -543,7 +543,7 @@ function TaxonomyManager({
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder={isPeople ? "Nome persona" : "Nome tag"}
+            placeholder={isPeople ? "Nome performer" : "Nome tag"}
           />
           <button type="submit">
             <Plus size={14} />
@@ -552,12 +552,12 @@ function TaxonomyManager({
         </form>
       </header>
       {entries.length ? (
-        <div className="taxonomy-grid">
+        <div className={isPeople ? "taxonomy-grid is-people-grid" : "taxonomy-grid"}>
           {entries.map((entry) => (
             <article className={isPeople ? "person-taxonomy-card" : ""} key={entry.id}>
               {isPeople ? (
                 <div className="person-card-images">
-                  {(entry.images ?? []).slice(0, 3).map((image) => (
+                  {(entry.images ?? []).slice(0, 1).map((image) => (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={image.url} alt="" loading="lazy" key={image.mediaId} />
                   ))}
@@ -567,8 +567,11 @@ function TaxonomyManager({
                         .split(" ")
                         .map((part) => part[0])
                         .join("")
-                        .slice(0, 2)}
+                      .slice(0, 2)}
                     </span>
+                  ) : null}
+                  {(entry.images?.length ?? 0) > 1 ? (
+                    <small>+{(entry.images?.length ?? 1) - 1} foto</small>
                   ) : null}
                 </div>
               ) : (
@@ -589,7 +592,7 @@ function TaxonomyManager({
                   onClick={() => onManageImages?.(entry)}
                 >
                   <ImagePlus size={14} />
-                  {entry.images?.length ? `${entry.images.length} immagini` : "Aggiungi immagini"}
+                  <span>{entry.images?.length ? "Gestisci foto" : "Aggiungi foto"}</span>
                 </button>
               ) : null}
             </article>
@@ -831,11 +834,17 @@ function MediaCard({
       <div className="media-caption">
         <div>
           <h3>{item.title}</h3>
-          <p>
-            {item.date}
-            <span>·</span>
-            {item.size}
+          <p className="catalog-credits">
+            <UsersRound size={12} />
+            {item.people.length
+              ? item.people.slice(0, 3).join(" · ")
+              : item.group}
           </p>
+          <small className="catalog-meta">
+            {item.tags.length
+              ? item.tags.slice(0, 3).join(" · ")
+              : `${item.date} · ${item.size}`}
+          </small>
         </div>
         {item.people.length ? (
           <div className="micro-avatars" aria-label={`Persone: ${item.people.join(", ")}`}>
@@ -1734,10 +1743,10 @@ function MobileNav({
   return (
     <nav className="mobile-nav">
       {[
-        { label: "Libreria", icon: LayoutGrid },
-        { label: "Persone", icon: UsersRound }
-      ].map(({ label, icon: Icon }) => (
-        <button className={active === label ? "is-active" : ""} key={label} onClick={() => onNavigate(label)}>
+        { label: "Libreria", value: "Libreria", icon: LayoutGrid },
+        { label: "Performer", value: "Persone", icon: UsersRound }
+      ].map(({ label, value, icon: Icon }) => (
+        <button className={active === value ? "is-active" : ""} key={value} onClick={() => onNavigate(value)}>
           <Icon size={20} />
           <span>{label}</span>
         </button>
@@ -1746,10 +1755,10 @@ function MobileNav({
         <Plus size={23} />
       </button>
       {[
-        { label: "Gruppi", icon: Layers3 },
-        { label: "Cerca", icon: Search }
-      ].map(({ label, icon: Icon }) => (
-        <button className={active === label ? "is-active" : ""} key={label} onClick={() => onNavigate(label)}>
+        { label: "Collezioni", value: "Gruppi", icon: Layers3 },
+        { label: "Cerca", value: "Cerca", icon: Search }
+      ].map(({ label, value, icon: Icon }) => (
+        <button className={active === value ? "is-active" : ""} key={value} onClick={() => onNavigate(value)}>
           <Icon size={20} />
           <span>{label}</span>
         </button>
@@ -2575,7 +2584,7 @@ export function MediaWorkspace() {
         onMobileMenu={() => setMobileSidebar(true)}
       />
 
-      <main className="main-content">
+      <main className={["Persone", "Tag"].includes(activeNav) ? "main-content is-taxonomy-view" : "main-content"}>
         {activeNav === "Utenti & accessi" ? (
           <UserManagement
             onReady={() => {
@@ -2593,30 +2602,44 @@ export function MediaWorkspace() {
           <>
         <section className="page-intro">
           <div>
-            <p className="eyebrow">ARCHIVIO PERSONALE</p>
+            <p className="eyebrow">
+              {activeNav === "Persone" ? "CAST & PERFORMER" : "CATALOGO PRIVATO"}
+            </p>
             <h1>
-              La tua libreria, <em>viva.</em>
+              {activeNav === "Persone" ? (
+                <>I tuoi <em>performer.</em></>
+              ) : (
+                <>La tua collezione, <em>organizzata.</em></>
+              )}
             </h1>
             <p className="page-subtitle">
-              {libraryCounts.all
+              {activeNav === "Persone"
+                ? `${taxonomyPeople.length.toLocaleString("it-IT")} profili con scene, immagini, tag e collezioni.`
+                : libraryCounts.all
                 ? `${libraryCounts.all.toLocaleString("it-IT")} media nel tuo archivio.`
                 : "Il tuo archivio è pronto per il primo contenuto."}
             </p>
           </div>
           <div className="library-metrics">
             <div>
-              <strong>{libraryCounts.all.toLocaleString("it-IT")}</strong>
-              <span>Media</span>
+              <strong>
+                {(activeNav === "Persone" ? taxonomyPeople.length : libraryCounts.all).toLocaleString("it-IT")}
+              </strong>
+              <span>{activeNav === "Persone" ? "Performer" : "Media"}</span>
             </div>
             <i />
             <div>
-              <strong>{videoCount.toLocaleString("it-IT")}</strong>
-              <span>Video</span>
+              <strong>
+                {(activeNav === "Persone" ? taxonomyTags.length : videoCount).toLocaleString("it-IT")}
+              </strong>
+              <span>{activeNav === "Persone" ? "Tag" : "Video"}</span>
             </div>
             <i />
             <div>
-              <strong>{taxonomyPeople.length.toLocaleString("it-IT")}</strong>
-              <span>Persone</span>
+              <strong>
+                {(activeNav === "Persone" ? taxonomyGroups.length : taxonomyPeople.length).toLocaleString("it-IT")}
+              </strong>
+              <span>{activeNav === "Persone" ? "Collezioni" : "Performer"}</span>
             </div>
           </div>
         </section>
@@ -2763,7 +2786,7 @@ export function MediaWorkspace() {
               {activeNav === "Gruppi" ? <Layers3 size={20} /> : null}
               {["Recenti", "Preferiti", "Da catalogare"].includes(activeNav) ? <Sparkles size={20} /> : null}
               <span>
-                <strong>{activeNav}</strong>
+                <strong>{activeNav === "Persone" ? "Performer" : activeNav === "Gruppi" ? "Collezioni" : activeNav}</strong>
                 <small>{visibleItems.length} elementi nella vista corrente</small>
               </span>
             </div>

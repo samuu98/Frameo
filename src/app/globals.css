@@ -1272,6 +1272,35 @@ kbd {
   margin: 0 4px;
 }
 
+.media-caption .catalog-credits {
+  max-width: 100%;
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: #5e55b7;
+  font-size: 11px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-credits svg {
+  flex: 0 0 auto;
+}
+
+.media-caption .catalog-meta {
+  max-width: 100%;
+  margin-top: 3px;
+  display: block;
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .micro-avatars {
   display: flex;
   flex-direction: row-reverse;
@@ -7979,6 +8008,18 @@ body {
   border-radius: 7px;
 }
 
+.main-content.is-taxonomy-view .external-library-rail,
+.main-content.is-taxonomy-view .status-rail,
+.main-content.is-taxonomy-view .library-toolbar,
+.main-content.is-taxonomy-view .active-filter-bar,
+.main-content.is-taxonomy-view .context-banner {
+  display: none;
+}
+
+.main-content.is-taxonomy-view .taxonomy-manager {
+  margin-top: 28px;
+}
+
 .folder-filter.is-active {
   color: #5145c8;
   background: var(--purple-pale);
@@ -8147,50 +8188,145 @@ body {
   font-size: 10px;
 }
 
-.person-taxonomy-card {
-  grid-template-columns: 70px 1fr !important;
+.taxonomy-grid.is-people-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.taxonomy-grid > article.person-taxonomy-card {
+  position: relative;
+  min-height: 0;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  color: #fff;
+  background: #171715;
+  border: 0;
+  border-radius: 12px;
+  aspect-ratio: 3 / 4;
+  box-shadow: 0 8px 24px rgba(20, 20, 18, 0.14);
+  isolation: isolate;
+}
+
+.taxonomy-grid > article.person-taxonomy-card:hover {
+  border-color: transparent;
+  box-shadow: 0 14px 34px rgba(20, 20, 18, 0.24);
+  transform: translateY(-2px);
 }
 
 .person-card-images {
-  width: 70px;
-  height: 58px;
-  display: flex;
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   overflow: hidden;
-  background: #e8e5dc;
-  border-radius: 7px;
+  background:
+    radial-gradient(circle at 50% 34%, rgba(109, 93, 251, 0.34), transparent 30%),
+    linear-gradient(145deg, #35332f, #151514);
+}
+
+.person-card-images::after {
+  content: "";
+  position: absolute;
+  inset: 35% 0 0;
+  background: linear-gradient(transparent, rgba(10, 10, 9, 0.2) 25%, rgba(10, 10, 9, 0.94));
 }
 
 .person-card-images img {
-  min-width: 0;
-  flex: 1 1 0;
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: cover;
+  transition: transform 420ms ease, filter 220ms ease;
+}
+
+.person-taxonomy-card:hover .person-card-images img {
+  transform: scale(1.035);
 }
 
 .person-card-images > span {
   width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "Newsreader Variable", serif;
+  font-size: clamp(44px, 5vw, 76px);
+  font-weight: 620;
+}
+
+.person-card-images > small {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  min-height: 25px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
   color: #fff;
-  background: #777269;
-  font-size: 15px;
-  font-weight: 760;
+  background: rgba(15, 15, 14, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.person-taxonomy-card .taxonomy-card-open {
+  position: absolute;
+  z-index: 2;
+  inset: auto 0 0;
+  min-height: 112px;
+  padding: 34px 16px 17px;
+  align-items: flex-end;
+  color: #fff;
+}
+
+.person-taxonomy-card .taxonomy-card-open strong {
+  color: #fff;
+  font-family: "Newsreader Variable", serif;
+  font-size: clamp(21px, 2vw, 29px);
+  font-weight: 620;
+  line-height: 1;
+}
+
+.person-taxonomy-card .taxonomy-card-open small {
+  margin-top: 7px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+}
+
+.person-taxonomy-card .taxonomy-card-open > svg {
+  margin-bottom: 7px;
+  color: rgba(255, 255, 255, 0.74);
 }
 
 .manage-person-images {
-  grid-column: 1 / -1;
-  min-height: 28px;
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  right: 10px;
+  min-height: 30px;
+  padding: 0 9px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: #5548cb;
-  background: var(--purple-pale);
-  border: 1px solid #d7d0ff;
-  border-radius: 6px;
+  color: #fff;
+  background: rgba(15, 15, 14, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  backdrop-filter: blur(8px);
   font-size: 10px;
   font-weight: 720;
+}
+
+.manage-person-images:hover {
+  background: var(--purple);
+  border-color: var(--purple);
 }
 
 .person-reference-modal {
@@ -8422,6 +8558,12 @@ body {
   background: #fff;
 }
 
+@media (max-width: 1120px) {
+  .taxonomy-grid.is-people-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .folder-filter {
     min-width: 185px;
@@ -8439,6 +8581,10 @@ body {
   }
 
   .taxonomy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .taxonomy-grid.is-people-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -8460,6 +8606,31 @@ body {
 
   .taxonomy-grid {
     grid-template-columns: 1fr;
+  }
+
+  .taxonomy-grid.is-people-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-right: 8px;
+    padding-left: 8px;
+    gap: 8px;
+  }
+
+  .person-taxonomy-card .taxonomy-card-open {
+    min-height: 84px;
+    padding: 26px 10px 11px;
+  }
+
+  .person-taxonomy-card .taxonomy-card-open strong {
+    font-size: 19px;
+  }
+
+  .manage-person-images {
+    width: 31px;
+    padding: 0;
+  }
+
+  .manage-person-images span {
+    display: none;
   }
 
   .person-reference-modal {
