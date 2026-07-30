@@ -198,40 +198,21 @@ async function processVideo(
   });
 
   await updateJobPhase(jobId, "video:preview", 45);
-  const segmentCount = durationSeconds >= 10 ? 8 : 1;
-  const segmentDuration =
-    segmentCount === 1 ? Math.max(0.5, Math.min(6, durationSeconds)) : 0.75;
-  const maxSegmentStart = Math.max(0, durationSeconds - segmentDuration);
-  const segmentStarts = Array.from({ length: segmentCount }, (_, index) =>
-    segmentCount === 1 ? 0 : (maxSegmentStart * index) / (segmentCount - 1)
+  const previewDuration = Math.max(0.5, Math.min(4, durationSeconds || 4));
+  const previewStart = Math.max(
+    0,
+    Math.min(durationSeconds * 0.25, durationSeconds - previewDuration)
   );
-  const previewArgs = ["-y"];
-  for (const start of segmentStarts) {
-    const inputWindow = Math.max(
-      segmentDuration,
-      Math.min(5, durationSeconds - start)
-    );
-    previewArgs.push(
-      "-ss",
-      start.toFixed(3),
-      "-t",
-      inputWindow.toFixed(3),
-      "-i",
-      inputPath
-    );
-  }
-  const segmentFilters = segmentStarts.map(
-    (_, index) =>
-      `[${index}:v]scale=720:-2:force_original_aspect_ratio=decrease,` +
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,setsar=1," +
-      `trim=duration=${segmentDuration.toFixed(3)},setpts=PTS-STARTPTS[v${index}]`
-  );
-  const concatInputs = segmentStarts.map((_, index) => `[v${index}]`).join("");
-  previewArgs.push(
-    "-filter_complex",
-    `${segmentFilters.join(";")};${concatInputs}concat=n=${segmentCount}:v=1:a=0[outv]`,
-    "-map",
-    "[outv]",
+  await run("ffmpeg", [
+    "-y",
+    "-ss",
+    previewStart.toFixed(3),
+    "-i",
+    inputPath,
+    "-t",
+    previewDuration.toFixed(3),
+    "-vf",
+    "scale=720:-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,setsar=1",
     "-an",
     "-c:v",
     "libx264",
@@ -244,8 +225,7 @@ async function processVideo(
     "-movflags",
     "+faststart",
     previewPath
-  );
-  await run("ffmpeg", previewArgs);
+  ]);
 
   await prisma.mediaAsset.update({
     where: { id: mediaId },
