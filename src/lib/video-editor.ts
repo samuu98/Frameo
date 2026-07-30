@@ -58,28 +58,41 @@ async function renderSegment(
   inputPath: string,
   outputPath: string,
   startMs: number,
-  endMs: number
+  endMs: number,
+  transcode = false
 ) {
-  await run("ffmpeg", [
+  const common = [
     "-y",
     "-ss",
     (startMs / 1000).toFixed(3),
     "-i",
     inputPath,
     "-t",
-    ((endMs - startMs) / 1000).toFixed(3),
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "20",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "160k",
+    ((endMs - startMs) / 1000).toFixed(3)
+  ];
+  const codecArgs = transcode
+    ? [
+        "-vf",
+        "scale=1280:-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-threads",
+        "1",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k"
+      ]
+    : ["-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero"];
+  await run("ffmpeg", [
+    ...common,
+    ...codecArgs,
     "-movflags",
     "+faststart",
     outputPath
@@ -172,7 +185,8 @@ export async function executeEditProject(projectId: string) {
           path.resolve(storageRoot, segment.media.originalPath),
           clipPath,
           segment.startMs,
-          segment.endMs
+          segment.endMs,
+          true
         );
         clips.push(clipPath);
         await prisma.editProject.update({
