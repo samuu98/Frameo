@@ -102,6 +102,7 @@ model MediaAsset {
   editSegments        EditSegment[]
   editOutputs         EditProject[]     @relation("EditOutput")
   fileOperations      FileOperation[]
+  personReferences    PersonReferenceImage[]
   sourceMedia         MediaAsset?       @relation("VideoScreenshots", fields: [sourceMediaId], references: [id], onDelete: SetNull)
   screenshots         MediaAsset[]      @relation("VideoScreenshots")
 
@@ -115,13 +116,26 @@ model MediaAsset {
 }
 
 model Person {
-  id        String        @id @default(cuid())
-  name      String
-  avatarUrl String?
-  createdAt DateTime      @default(now())
-  media     MediaPerson[]
+  id              String                 @id @default(cuid())
+  name            String
+  avatarUrl       String?
+  createdAt       DateTime               @default(now())
+  media           MediaPerson[]
+  referenceImages PersonReferenceImage[]
 
   @@unique([name])
+}
+
+model PersonReferenceImage {
+  personId  String
+  mediaId   String
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  person    Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
+  media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([personId, mediaId])
+  @@index([mediaId])
 }
 
 model MediaPerson {

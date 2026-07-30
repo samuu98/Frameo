@@ -27,6 +27,7 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   const people = csv(url.searchParams.get("people"));
   const tags = csv(url.searchParams.get("tags"));
   const groups = csv(url.searchParams.get("groups"));
+  const folders = csv(url.searchParams.get("folders"));
   const search = url.searchParams.get("search")?.trim();
   const durationMin = finiteNumber(url.searchParams.get("durationMin"));
   const durationMax = finiteNumber(url.searchParams.get("durationMax"));
@@ -72,6 +73,9 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   }
   if (groups.length) {
     filters.push({ groups: { some: { group: { name: { in: groups } } } } });
+  }
+  if (folders.length) {
+    filters.push({ directoryKey: { in: folders } });
   }
   if (durationMin !== null || durationMax !== null) {
     filters.push({

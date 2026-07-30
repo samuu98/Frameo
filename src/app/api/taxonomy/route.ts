@@ -6,6 +6,12 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const streamUrl = (storagePath: string) =>
+  `/api/stream/${storagePath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+
 export async function GET() {
   if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") {
     return NextResponse.json({
@@ -17,7 +23,25 @@ export async function GET() {
   }
   const [people, tags, groups] = await Promise.all([
     prisma.person.findMany({
-      select: { id: true, name: true, _count: { select: { media: true } } },
+      select: {
+        id: true,
+        name: true,
+        _count: { select: { media: true } },
+        referenceImages: {
+          orderBy: { sortOrder: "asc" },
+          select: {
+            media: {
+              select: {
+                id: true,
+                title: true,
+                thumbnailPath: true,
+                previewPath: true,
+                originalPath: true
+              }
+            }
+          }
+        }
+      },
       orderBy: { name: "asc" }
     }),
     prisma.tag.findMany({
@@ -27,9 +51,16 @@ export async function GET() {
     prisma.group.findMany({ select: { id: true, name: true, accent: true }, orderBy: { name: "asc" } })
   ]);
   return NextResponse.json({
-    people: people.map(({ _count, ...person }) => ({
+    people: people.map(({ _count, referenceImages, ...person }) => ({
       ...person,
-      count: _count.media
+      count: _count.media,
+      images: referenceImages.map(({ media }) => ({
+        mediaId: media.id,
+        title: media.title,
+        url: streamUrl(
+          media.thumbnailPath ?? media.previewPath ?? media.originalPath
+        )
+      }))
     })),
     tags: tags.map(({ _count, ...tag }) => ({
       ...tag,

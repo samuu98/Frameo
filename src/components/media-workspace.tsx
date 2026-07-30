@@ -22,6 +22,7 @@ import {
   HardDrive,
   Heart,
   Image as ImageIcon,
+  ImagePlus,
   Inbox,
   Info,
   Layers3,
@@ -80,6 +81,7 @@ import { OrganizeFilesModal } from "@/components/organize-files-modal";
 import { UserManagement } from "@/components/user-management";
 import { VideoEditorModal } from "@/components/video-editor-modal";
 import { LibraryManagement } from "@/components/library-management";
+import { PersonReferenceModal } from "@/components/person-reference-modal";
 
 const navItems = [
   { label: "Libreria", icon: LayoutGrid },
@@ -105,6 +107,23 @@ interface TaxonomyEntry {
   name: string;
   color?: string | null;
   count: number;
+  images?: Array<{
+    mediaId: string;
+    title: string;
+    url: string;
+  }>;
+}
+
+interface FolderOption {
+  key: string;
+  label: string;
+  count: number;
+}
+
+interface PersonFacets {
+  total: number;
+  tags: Array<{ id: string; name: string; color: string; count: number }>;
+  groups: Array<{ id: string; name: string; color: string; count: number }>;
 }
 
 const formatBytes = (bytes: number) => {
@@ -487,12 +506,14 @@ function TaxonomyManager({
   kind,
   entries,
   onCreate,
-  onOpen
+  onOpen,
+  onManageImages
 }: {
   kind: "people" | "tags";
   entries: TaxonomyEntry[];
   onCreate: (name: string) => void;
   onOpen: (name: string) => void;
+  onManageImages?: (entry: TaxonomyEntry) => void;
 }) {
   const [name, setName] = useState("");
   const isPeople = kind === "people";
@@ -533,30 +554,45 @@ function TaxonomyManager({
       {entries.length ? (
         <div className="taxonomy-grid">
           {entries.map((entry) => (
-            <button key={entry.id} onClick={() => onOpen(entry.name)}>
-              <span
-                style={{
-                  background: isPeople
-                    ? undefined
-                    : entry.color ?? "#8B5CF6"
-                }}
-              >
-                {isPeople
-                  ? entry.name
-                      .split(" ")
-                      .map((part) => part[0])
-                      .join("")
-                      .slice(0, 2)
-                  : <Tag size={15} />}
-              </span>
-              <p>
-                <strong>{entry.name}</strong>
-                <small>
-                  {entry.count.toLocaleString("it-IT")} media
-                </small>
-              </p>
-              <ChevronRight size={15} />
-            </button>
+            <article className={isPeople ? "person-taxonomy-card" : ""} key={entry.id}>
+              {isPeople ? (
+                <div className="person-card-images">
+                  {(entry.images ?? []).slice(0, 3).map((image) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={image.url} alt="" loading="lazy" key={image.mediaId} />
+                  ))}
+                  {!entry.images?.length ? (
+                    <span>
+                      {entry.name
+                        .split(" ")
+                        .map((part) => part[0])
+                        .join("")
+                        .slice(0, 2)}
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                <span style={{ background: entry.color ?? "#8B5CF6" }}>
+                  <Tag size={15} />
+                </span>
+              )}
+              <button className="taxonomy-card-open" onClick={() => onOpen(entry.name)}>
+                <p>
+                  <strong>{entry.name}</strong>
+                  <small>{entry.count.toLocaleString("it-IT")} media</small>
+                </p>
+                <ChevronRight size={15} />
+              </button>
+              {isPeople ? (
+                <button
+                  className="manage-person-images"
+                  onClick={() => onManageImages?.(entry)}
+                >
+                  <ImagePlus size={14} />
+                  {entry.images?.length ? `${entry.images.length} immagini` : "Aggiungi immagini"}
+                </button>
+              ) : null}
+            </article>
           ))}
         </div>
       ) : (
@@ -565,6 +601,61 @@ function TaxonomyManager({
           <p>Nessun elemento creato.</p>
         </div>
       )}
+    </section>
+  );
+}
+
+function PersonFacetTabs({
+  person,
+  facets,
+  activeTag,
+  activeGroup,
+  onAll,
+  onTag,
+  onGroup
+}: {
+  person: string;
+  facets: PersonFacets | null;
+  activeTag?: string;
+  activeGroup?: string;
+  onAll: () => void;
+  onTag: (name: string) => void;
+  onGroup: (name: string) => void;
+}) {
+  return (
+    <section className="person-facet-tabs" aria-label={`Sottogruppi di ${person}`}>
+      <div>
+        <UsersRound size={16} />
+        <span><strong>{person}</strong><small>Tag e gruppi collegati</small></span>
+      </div>
+      <nav>
+        <button
+          className={!activeTag && !activeGroup ? "is-active" : ""}
+          onClick={onAll}
+        >
+          Tutti <span>{facets?.total ?? "…"}</span>
+        </button>
+        {facets?.tags.map((tag) => (
+          <button
+            className={activeTag === tag.name ? "is-active" : ""}
+            onClick={() => onTag(tag.name)}
+            key={`tag-${tag.id}`}
+          >
+            <i style={{ background: tag.color }} />
+            {tag.name} <span>{tag.count}</span>
+          </button>
+        ))}
+        {facets?.groups.map((group) => (
+          <button
+            className={activeGroup === group.name ? "is-active" : ""}
+            onClick={() => onGroup(group.name)}
+            key={`group-${group.id}`}
+          >
+            <Layers3 size={13} />
+            {group.name} <span>{group.count}</span>
+          </button>
+        ))}
+      </nav>
     </section>
   );
 }
@@ -1546,14 +1637,20 @@ function CommandPalette({
 
 function BulkToolbar({
   count,
+  tags,
+  people,
   onClear,
   onAddTag,
+  onAddPerson,
   onEdit,
   onOrganize
 }: {
   count: number;
+  tags: string[];
+  people: string[];
   onClear: () => void;
   onAddTag: (tag: string) => void;
+  onAddPerson: (name: string) => void;
   onEdit: () => void;
   onOrganize: () => void;
 }) {
@@ -1562,10 +1659,28 @@ function BulkToolbar({
       <span className="bulk-count">{count}</span>
       <strong>selezionati</strong>
       <i />
-      <button onClick={() => onAddTag("Selezionato")}>
+      <label className="bulk-select">
         <Tag size={16} />
-        Tagga
-      </button>
+        <select
+          value=""
+          onChange={(event) => event.target.value && onAddTag(event.target.value)}
+          aria-label="Assegna tag ai media selezionati"
+        >
+          <option value="">Assegna tag…</option>
+          {tags.map((tag) => <option key={tag}>{tag}</option>)}
+        </select>
+      </label>
+      <label className="bulk-select">
+        <UsersRound size={16} />
+        <select
+          value=""
+          onChange={(event) => event.target.value && onAddPerson(event.target.value)}
+          aria-label="Assegna persona ai media selezionati"
+        >
+          <option value="">Assegna persona…</option>
+          {people.map((person) => <option key={person}>{person}</option>)}
+        </select>
+      </label>
       <button onClick={onOrganize}>
         <FolderInput size={16} />
         Filesystem
@@ -1642,6 +1757,10 @@ export function MediaWorkspace() {
   const [taxonomyPeople, setTaxonomyPeople] = useState<TaxonomyEntry[]>([]);
   const [taxonomyTags, setTaxonomyTags] = useState<TaxonomyEntry[]>([]);
   const [taxonomyGroups, setTaxonomyGroups] = useState<string[]>([]);
+  const [folderOptions, setFolderOptions] = useState<FolderOption[]>([]);
+  const [folderFilter, setFolderFilter] = useState("");
+  const [personFacets, setPersonFacets] = useState<PersonFacets | null>(null);
+  const [referencePerson, setReferencePerson] = useState<TaxonomyEntry | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspected, setInspected] = useState<MediaItem | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -1679,6 +1798,7 @@ export function MediaWorkspace() {
     if (advancedFilters.groups.length) {
       params.set("groups", advancedFilters.groups.join(","));
     }
+    if (folderFilter) params.set("folders", folderFilter);
     if (advancedFilters.duration === "short") params.set("durationMax", "60");
     if (advancedFilters.duration === "medium") {
       params.set("durationMin", "60");
@@ -1696,7 +1816,7 @@ export function MediaWorkspace() {
     if (advancedFilters.dateFrom) params.set("dateFrom", advancedFilters.dateFrom);
     if (advancedFilters.dateTo) params.set("dateTo", advancedFilters.dateTo);
     return params.toString();
-  }, [activeNav, advancedFilters, filter, sort]);
+  }, [activeNav, advancedFilters, filter, folderFilter, sort]);
 
   const visibleItems = useMemo(() => {
     let result = filter === "all" ? [...items] : items.filter((item) => item.type === filter);
@@ -1760,6 +1880,10 @@ export function MediaWorkspace() {
     [items, selectedIds]
   );
   const advancedFilterCount = countAdvancedFilters(advancedFilters);
+  const selectedPerson =
+    advancedFilters.people.length === 1
+      ? taxonomyPeople.find(({ name }) => name === advancedFilters.people[0]) ?? null
+      : null;
   const imageCount = libraryCounts.image;
   const videoCount = libraryCounts.video;
   const uncataloguedCount = items.filter((item) => !item.tags.length || item.status === "processing").length;
@@ -1835,7 +1959,12 @@ export function MediaWorkspace() {
     void fetch("/api/taxonomy")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: {
-        people?: Array<string | { id: string; name: string; count?: number }>;
+        people?: Array<string | {
+          id: string;
+          name: string;
+          count?: number;
+          images?: TaxonomyEntry["images"];
+        }>;
         tags?: Array<string | {
           id: string;
           name: string;
@@ -1848,7 +1977,12 @@ export function MediaWorkspace() {
         setTaxonomyPeople((payload.people ?? []).map((entry) =>
           typeof entry === "string"
             ? { id: `demo-person-${entry}`, name: entry, count: 0 }
-            : { id: entry.id, name: entry.name, count: entry.count ?? 0 }
+            : {
+                id: entry.id,
+                name: entry.name,
+                count: entry.count ?? 0,
+                images: entry.images
+              }
         ));
         setTaxonomyTags((payload.tags ?? []).map((entry) => typeof entry === "string"
           ? { id: `demo-tag-${entry}`, name: entry, color: "#6D5DFB", count: 0 }
@@ -1861,6 +1995,12 @@ export function MediaWorkspace() {
         setTaxonomyGroups((payload.groups ?? []).map((entry) => typeof entry === "string" ? entry : entry.name));
       })
       .catch(() => undefined);
+    void fetch("/api/library/folders")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { folders?: FolderOption[] } | null) => {
+        if (active) setFolderOptions(payload?.folders ?? []);
+      })
+      .catch(() => undefined);
     void fetch("/api/users")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: { onboarding?: boolean } | null) => {
@@ -1871,6 +2011,24 @@ export function MediaWorkspace() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedPerson || selectedPerson.id.startsWith("demo-")) {
+      setPersonFacets(null);
+      return;
+    }
+    let active = true;
+    setPersonFacets(null);
+    void fetch(`/api/taxonomy/people/${selectedPerson.id}/facets`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: PersonFacets | null) => {
+        if (active && payload) setPersonFacets(payload);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [selectedPerson]);
 
   useEffect(() => {
     let active = true;
@@ -1897,6 +2055,19 @@ export function MediaWorkspace() {
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/library/folders")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { folders?: FolderOption[] } | null) => {
+        if (active) setFolderOptions(payload?.folders ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [mediaRefreshNonce]);
 
   useEffect(() => {
     const processingIds = items
@@ -2002,7 +2173,12 @@ export function MediaWorkspace() {
     void fetch("/api/taxonomy")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: {
-        people?: Array<{ id: string; name: string; count?: number }>;
+        people?: Array<{
+          id: string;
+          name: string;
+          count?: number;
+          images?: TaxonomyEntry["images"];
+        }>;
         tags?: Array<{
           id: string;
           name: string;
@@ -2014,7 +2190,8 @@ export function MediaWorkspace() {
         setTaxonomyPeople((payload.people ?? []).map((entry) => ({
           id: entry.id,
           name: entry.name,
-          count: entry.count ?? 0
+          count: entry.count ?? 0,
+          images: entry.images
         })));
         setTaxonomyTags((payload.tags ?? []).map((entry) => ({
           id: entry.id,
@@ -2103,19 +2280,56 @@ export function MediaWorkspace() {
           : item
       )
     );
-    void Promise.all(
-      targets.map((item) =>
-        patchMediaTaxonomy(item, {
-          tagNames: item.tags.includes(tag) ? item.tags : [...item.tags, tag]
-        })
-      )
-    )
-      .then(() => {
-        setToast(`“${tag}” aggiunto a ${targets.length} media`);
+    void fetch("/api/media/bulk-taxonomy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mediaIds: targets.map(({ id }) => id),
+        addTagNames: [tag]
+      })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as {
+          updated?: number;
+          error?: string;
+        } | null;
+        if (!response.ok) throw new Error(payload?.error ?? "Tag non salvato");
+        setToast(`“${tag}” aggiunto a ${payload?.updated ?? targets.length} media`);
         reloadTaxonomy();
       })
       .catch((error) => {
         setToast(error instanceof Error ? error.message : "Tag non salvato");
+      });
+  };
+
+  const addPersonToSelection = (name: string) => {
+    const targets = selectedItems;
+    setItems((current) =>
+      current.map((item) =>
+        selectedIds.has(item.id) && !item.people.includes(name)
+          ? { ...item, people: [...item.people, name] }
+          : item
+      )
+    );
+    void fetch("/api/media/bulk-taxonomy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mediaIds: targets.map(({ id }) => id),
+        addPersonNames: [name]
+      })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as {
+          updated?: number;
+          error?: string;
+        } | null;
+        if (!response.ok) throw new Error(payload?.error ?? "Persona non assegnata");
+        setToast(`${name} assegnato a ${payload?.updated ?? targets.length} media`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        setToast(error instanceof Error ? error.message : "Persona non assegnata");
       });
   };
 
@@ -2409,6 +2623,25 @@ export function MediaWorkspace() {
             ))}
           </div>
           <div className="toolbar-actions">
+            <label className={folderFilter ? "folder-filter is-active" : "folder-filter"}>
+              <Folder size={16} />
+              <select
+                value={folderFilter}
+                onChange={(event) => {
+                  setFolderFilter(event.target.value);
+                  setSelectedIds(new Set());
+                }}
+                aria-label="Filtra per cartella"
+              >
+                <option value="">Tutte le cartelle</option>
+                {folderOptions.map((folder) => (
+                  <option value={folder.key} key={folder.key}>
+                    {folder.label} ({folder.count.toLocaleString("it-IT")})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={13} />
+            </label>
             <button
               className="highlights-launch"
               onClick={() => setHighlightsOpen(true)}
@@ -2461,9 +2694,16 @@ export function MediaWorkspace() {
           </div>
         </section>
 
-        {advancedFilterCount ? (
+        {advancedFilterCount || folderFilter ? (
           <div className="active-filter-bar">
             <span><SlidersHorizontal size={14} /> Filtri attivi</span>
+            {folderFilter ? (
+              <button onClick={() => setFolderFilter("")}>
+                <Folder size={12} />
+                {folderOptions.find(({ key }) => key === folderFilter)?.label ?? folderFilter}
+                <X size={12} />
+              </button>
+            ) : null}
             {[...advancedFilters.people, ...advancedFilters.tags, ...advancedFilters.groups].map((entry) => (
               <button key={entry} onClick={() => setAdvancedFilters((current) => ({
                 ...current,
@@ -2475,7 +2715,24 @@ export function MediaWorkspace() {
             {advancedFilters.markerOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, markerOnly: false }))}>con marker<X size={12} /></button> : null}
             {advancedFilters.duplicateOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, duplicateOnly: false }))}>duplicati<X size={12} /></button> : null}
             {advancedFilters.favoriteOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, favoriteOnly: false }))}>preferiti<X size={12} /></button> : null}
-            <button className="clear-active-filters" onClick={() => setAdvancedFilters(emptyAdvancedFilters)}>Azzera tutto</button>
+            {folderFilter && visibleItems.length ? (
+              <button
+                className="select-visible-media"
+                onClick={() => setSelectedIds(new Set(visibleItems.map(({ id }) => id)))}
+              >
+                <Check size={12} />
+                Seleziona i {visibleItems.length} caricati
+              </button>
+            ) : null}
+            <button
+              className="clear-active-filters"
+              onClick={() => {
+                setAdvancedFilters(emptyAdvancedFilters);
+                setFolderFilter("");
+              }}
+            >
+              Azzera tutto
+            </button>
           </div>
         ) : null}
 
@@ -2498,6 +2755,30 @@ export function MediaWorkspace() {
           </div>
         ) : null}
 
+        {selectedPerson && activeNav === "Libreria" ? (
+          <PersonFacetTabs
+            person={selectedPerson.name}
+            facets={personFacets}
+            activeTag={advancedFilters.tags[0]}
+            activeGroup={advancedFilters.groups[0]}
+            onAll={() => setAdvancedFilters((current) => ({
+              ...current,
+              tags: [],
+              groups: []
+            }))}
+            onTag={(name) => setAdvancedFilters((current) => ({
+              ...current,
+              tags: [name],
+              groups: []
+            }))}
+            onGroup={(name) => setAdvancedFilters((current) => ({
+              ...current,
+              tags: [],
+              groups: [name]
+            }))}
+          />
+        ) : null}
+
         {activeNav === "Persone" ? (
           <TaxonomyManager
             kind="people"
@@ -2507,6 +2788,7 @@ export function MediaWorkspace() {
               setAdvancedFilters((current) => ({ ...current, people: [name] }));
               setActiveNav("Libreria");
             }}
+            onManageImages={setReferencePerson}
           />
         ) : activeNav === "Tag" ? (
           <TaxonomyManager
@@ -2601,14 +2883,27 @@ export function MediaWorkspace() {
       {selectedIds.size ? (
         <BulkToolbar
           count={selectedIds.size}
+          tags={taxonomyTags.map(({ name }) => name)}
+          people={taxonomyPeople.map(({ name }) => name)}
           onClear={() => setSelectedIds(new Set())}
           onAddTag={addTagToSelection}
+          onAddPerson={addPersonToSelection}
           onEdit={() => setEditorOpen(true)}
           onOrganize={() => setOrganizerOpen(true)}
         />
       ) : null}
 
       {uploadOpen ? <UploadModal onClose={() => setUploadOpen(false)} onUpload={handleUpload} /> : null}
+      {referencePerson ? (
+        <PersonReferenceModal
+          person={referencePerson}
+          onClose={() => setReferencePerson(null)}
+          onSaved={() => {
+            reloadTaxonomy();
+            setToast(`Immagini di ${referencePerson.name} aggiornate`);
+          }}
+        />
+      ) : null}
       {commandOpen ? (
         <CommandPalette
           items={items}

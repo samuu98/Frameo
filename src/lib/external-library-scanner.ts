@@ -102,13 +102,20 @@ async function scanExternalLibrary() {
     throw new Error("La libreria esterna configurata non è una directory.");
   }
 
-  const directoryKey = process.env.EXTERNAL_MEDIA_KEY?.trim() || "external-library";
+  const legacyDirectoryKey =
+    process.env.EXTERNAL_MEDIA_KEY?.trim() || "external-library";
   const storageRelativeRoot = toPosix(path.relative(storageRoot, externalRoot));
   const settings = await getLibrarySettings();
+  await prisma.$executeRaw`
+    UPDATE "MediaAsset"
+    SET "directoryKey" = regexp_replace("originalPath", '/[^/]+$', '')
+    WHERE "directoryKey" = ${legacyDirectoryKey}
+      AND "originalPath" LIKE ${`${storageRelativeRoot}/%`}
+  `;
   const existingPaths = new Set(
     (
       await prisma.mediaAsset.findMany({
-        where: { directoryKey },
+        where: { originalPath: { startsWith: `${storageRelativeRoot}/` } },
         select: { originalPath: true }
       })
     ).map(({ originalPath }) => originalPath)
@@ -184,7 +191,7 @@ async function scanExternalLibrary() {
         capturedAt: fileStat.mtime,
         originalPath,
         sourceFileName: entry.name,
-        directoryKey
+        directoryKey: path.posix.dirname(originalPath)
       });
 
       if (batch.length >= 500) await flushBatch(batch);
