@@ -54,7 +54,7 @@ export async function GET(request: Request) {
     url.searchParams.get("sort") === "name"
       ? [{ title: "asc" as const }, { createdAt: "desc" as const }]
       : [{ capturedAt: "desc" as const }, { createdAt: "desc" as const }];
-  const [items, total, imageCount, videoCount] = await prisma.$transaction([
+  const [items, total, imageCount, videoCount, uncataloguedCount] = await prisma.$transaction([
     prisma.mediaAsset.findMany({
       where,
       include: includeRelations,
@@ -68,6 +68,14 @@ export async function GET(request: Request) {
     }),
     prisma.mediaAsset.count({
       where: { AND: [accessWhere, { kind: MediaKind.VIDEO }] }
+    }),
+    prisma.mediaAsset.count({
+      where: {
+        AND: [
+          accessWhere,
+          { OR: [{ people: { none: {} } }, { groups: { none: {} } }] }
+        ]
+      }
     })
   ]);
 
@@ -77,7 +85,8 @@ export async function GET(request: Request) {
     counts: {
       all: imageCount + videoCount,
       image: imageCount,
-      video: videoCount
+      video: videoCount,
+      uncatalogued: uncataloguedCount
     }
   });
 }

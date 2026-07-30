@@ -31,6 +31,18 @@ const updateJobPhase = (jobId: string, operation: JobPhase, progress: number) =>
     data: { operation, progress: Math.max(0, Math.min(100, Math.round(progress))) }
   });
 
+const conciseProcessError = (command: string, code: number | null, stderr: string) => {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const meaningful = lines.filter((line) =>
+    /(error|failed|empty|invalid|could not|not found|no such|unable|nothing was encoded|does not contain)/i.test(line)
+  );
+  const detail = (meaningful.length ? meaningful : lines).slice(-6).join(" · ");
+  return `${command} terminato con codice ${code ?? "sconosciuto"}${detail ? `: ${detail}` : ""}`;
+};
+
 const run = (command: string, args: string[]) =>
   new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -48,7 +60,7 @@ const run = (command: string, args: string[]) =>
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(`${command} exited with ${code}: ${stderr.slice(-1800)}`));
+      else reject(new Error(conciseProcessError(command, code, stderr)));
     });
   });
 
@@ -137,7 +149,7 @@ async function processVideo(
   await updateJobPhase(jobId, "video:analyze", 8);
   const probeOutput = await run("ffprobe", [
     "-v",
-    "quiet",
+    "error",
     "-print_format",
     "json",
     "-show_format",
@@ -203,29 +215,38 @@ async function processVideo(
     0,
     Math.min(durationSeconds * 0.25, durationSeconds - previewDuration)
   );
-  await run("ffmpeg", [
-    "-y",
-    "-ss",
-    previewStart.toFixed(3),
-    "-i",
-    inputPath,
-    "-t",
-    previewDuration.toFixed(3),
-    "-vf",
-    "scale=720:-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,setsar=1",
-    "-an",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "27",
-    "-pix_fmt",
-    "yuv420p",
-    "-movflags",
-    "+faststart",
-    previewPath
-  ]);
+  const encodePreview = (startSeconds: number) =>
+    run("ffmpeg", [
+      "-y",
+      "-ss",
+      startSeconds.toFixed(3),
+      "-i",
+      inputPath,
+      "-t",
+      previewDuration.toFixed(3),
+      "-map",
+      "0:v:0",
+      "-vf",
+      "scale=720:-2:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24,setsar=1",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "27",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      previewPath
+    ]);
+  try {
+    await encodePreview(previewStart);
+  } catch (error) {
+    if (previewStart <= 0.25) throw error;
+    await encodePreview(0.2);
+  }
 
   await prisma.mediaAsset.update({
     where: { id: mediaId },

@@ -50,8 +50,8 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   if (uncatalogued) {
     filters.push({
       OR: [
-        { tags: { none: {} } },
-        { status: { in: [MediaStatus.UPLOADING, MediaStatus.PROCESSING] } }
+        { people: { none: {} } },
+        { groups: { none: {} } }
       ]
     });
   }

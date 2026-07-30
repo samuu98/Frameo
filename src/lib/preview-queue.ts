@@ -117,7 +117,7 @@ export async function startPreviewQueue(options: {
         queue.failed += 1;
         queue.error =
           error instanceof Error
-            ? error.message.slice(0, 600)
+            ? error.message.slice(-600)
             : "Generazione anteprima non riuscita.";
       }
     }
@@ -125,7 +125,7 @@ export async function startPreviewQueue(options: {
     .catch((error) => {
       queue.error =
         error instanceof Error
-          ? error.message.slice(0, 600)
+          ? error.message.slice(-600)
           : "Coda anteprime interrotta.";
     })
     .finally(() => {

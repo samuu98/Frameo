@@ -9,10 +9,11 @@ export const dynamic = "force-dynamic";
 const schema = z.object({
   mediaIds: z.array(z.string().min(1)).min(1).max(500),
   addTagNames: z.array(z.string().trim().min(1).max(64)).max(30).optional(),
-  addPersonNames: z.array(z.string().trim().min(1).max(64)).max(30).optional()
+  addPersonNames: z.array(z.string().trim().min(1).max(64)).max(30).optional(),
+  addGroupIds: z.array(z.string().min(1)).max(30).optional()
 }).refine(
-  ({ addTagNames, addPersonNames }) =>
-    Boolean(addTagNames?.length || addPersonNames?.length),
+  ({ addTagNames, addPersonNames, addGroupIds }) =>
+    Boolean(addTagNames?.length || addPersonNames?.length || addGroupIds?.length),
   { message: "Nessuna assegnazione richiesta" }
 );
 
@@ -46,7 +47,8 @@ export async function POST(request: Request) {
 
   const tagNames = [...new Set(parsed.data.addTagNames ?? [])];
   const personNames = [...new Set(parsed.data.addPersonNames ?? [])];
-  const [tags, people] = await Promise.all([
+  const groupIds = [...new Set(parsed.data.addGroupIds ?? [])];
+  const [tags, people, groups] = await Promise.all([
     Promise.all(
       tagNames.map((name) =>
         prisma.tag.upsert({
@@ -64,8 +66,18 @@ export async function POST(request: Request) {
           create: { name }
         })
       )
-    )
+    ),
+    prisma.group.findMany({
+      where: { id: { in: groupIds } },
+      select: { id: true }
+    })
   ]);
+  if (groups.length !== groupIds.length) {
+    return NextResponse.json(
+      { error: "Uno o più gruppi non sono disponibili" },
+      { status: 422 }
+    );
+  }
 
   await prisma.$transaction([
     ...(tags.length
@@ -80,6 +92,18 @@ export async function POST(request: Request) {
       ? [prisma.mediaPerson.createMany({
           data: accessibleIds.flatMap((mediaId) =>
             people.map(({ id: personId }) => ({ mediaId, personId }))
+          ),
+          skipDuplicates: true
+        })]
+      : []),
+    ...(groups.length
+      ? [prisma.groupMedia.createMany({
+          data: accessibleIds.flatMap((mediaId) =>
+            groups.map(({ id: groupId }, sortOrder) => ({
+              mediaId,
+              groupId,
+              sortOrder
+            }))
           ),
           skipDuplicates: true
         })]

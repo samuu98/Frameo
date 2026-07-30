@@ -48,7 +48,15 @@ export async function GET() {
       select: { id: true, name: true, color: true, _count: { select: { media: true } } },
       orderBy: { name: "asc" }
     }),
-    prisma.group.findMany({ select: { id: true, name: true, accent: true }, orderBy: { name: "asc" } })
+    prisma.group.findMany({
+      select: {
+        id: true,
+        name: true,
+        accent: true,
+        _count: { select: { media: true } }
+      },
+      orderBy: { name: "asc" }
+    })
   ]);
   return NextResponse.json({
     people: people.map(({ _count, referenceImages, ...person }) => ({
@@ -66,7 +74,10 @@ export async function GET() {
       ...tag,
       count: _count.media
     })),
-    groups
+    groups: groups.map(({ _count, ...group }) => ({
+      ...group,
+      count: _count.media
+    }))
   });
 }
 
