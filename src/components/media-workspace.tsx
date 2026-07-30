@@ -682,7 +682,9 @@ function MediaCard({
   const isProcessing = item.status === "processing";
   const hoverVideoRef = useRef<HTMLVideoElement>(null);
   const [previewing, setPreviewing] = useState(false);
-  const needsVideoPlaceholder = item.type === "video" && !item.thumbnailUrl;
+  const [visualFailed, setVisualFailed] = useState(false);
+  const needsVisualPlaceholder =
+    visualFailed || (item.type === "video" && !item.thumbnailUrl);
 
   useEffect(() => {
     const video = hoverVideoRef.current;
@@ -712,14 +714,31 @@ function MediaCard({
       onPointerLeave={() => setPreviewing(false)}
     >
       <div className="media-visual" style={{ backgroundColor: item.accent }}>
-        {needsVideoPlaceholder ? (
+        {needsVisualPlaceholder ? (
           <div className="video-card-placeholder">
-            <Film size={28} />
-            <span>Video originale</span>
+            {item.type === "video" ? <Film size={28} /> : <ImageIcon size={28} />}
+            <span>
+              {item.type === "video" ? "Video originale" : "Immagine non disponibile"}
+            </span>
           </div>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.src} alt="" loading="lazy" />
+          <img
+            src={item.src}
+            alt=""
+            loading="lazy"
+            onError={(event) => {
+              if (
+                item.type === "image" &&
+                item.originalUrl &&
+                event.currentTarget.src !== new URL(item.originalUrl, window.location.href).href
+              ) {
+                event.currentTarget.src = item.originalUrl;
+                return;
+              }
+              setVisualFailed(true);
+            }}
+          />
         )}
         {item.type === "video" && item.previewUrl && previewing ? (
           <video
