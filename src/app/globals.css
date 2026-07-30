@@ -9996,6 +9996,31 @@ body {
   text-align: center;
 }
 
+@media (max-width: 1500px) {
+  .toolbar-actions {
+    min-width: 0;
+  }
+
+  .toolbar-actions .folder-filter {
+    min-width: 130px;
+    max-width: 220px;
+  }
+
+  .toolbar-actions .highlights-launch,
+  .toolbar-actions .quick-mode {
+    width: 38px;
+    min-width: 38px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .toolbar-actions .highlights-launch kbd,
+  .toolbar-actions .quick-mode kbd {
+    display: none;
+  }
+}
+
 @media (max-width: 860px) {
   .media-loading-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
