@@ -77,6 +77,20 @@ const scanStatus =
 
 const toPosix = (value: string) => value.split(path.sep).join("/");
 
+const excludedScanFolders = () =>
+  (process.env.EXTERNAL_MEDIA_EXCLUDE ?? "stash")
+    .split(",")
+    .map((entry) => entry.trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+
+const isExcluded = (relativePath: string, exclusions: string[]) => {
+  const normalized = toPosix(relativePath).replace(/^\/+|\/+$/g, "");
+  return exclusions.some(
+    (excluded) =>
+      normalized === excluded || normalized.startsWith(`${excluded}/`)
+  );
+};
+
 async function flushBatch(batch: Prisma.MediaAssetCreateManyInput[]) {
   if (!batch.length) return;
   const result = await prisma.mediaAsset.createMany({
@@ -105,7 +119,19 @@ async function scanExternalLibrary() {
   const legacyDirectoryKey =
     process.env.EXTERNAL_MEDIA_KEY?.trim() || "external-library";
   const storageRelativeRoot = toPosix(path.relative(storageRoot, externalRoot));
+  const exclusions = excludedScanFolders();
   const settings = await getLibrarySettings();
+  if (exclusions.length) {
+    await prisma.mediaAsset.deleteMany({
+      where: {
+        OR: exclusions.map((excluded) => ({
+          originalPath: {
+            startsWith: `${storageRelativeRoot}/${toPosix(excluded)}/`
+          }
+        }))
+      }
+    });
+  }
   await prisma.$executeRaw`
     UPDATE "MediaAsset"
     SET "directoryKey" = regexp_replace("originalPath", '/[^/]+$', '')
@@ -136,6 +162,7 @@ async function scanExternalLibrary() {
     );
   const pendingDirectories: Array<{ absolute: string; relative: string }> = [];
   for (const folder of scanFolders) {
+    if (isExcluded(folder, exclusions)) continue;
     const absolute = path.resolve(externalRoot, folder);
     if (
       absolute !== externalRoot &&
@@ -163,6 +190,7 @@ async function scanExternalLibrary() {
         : entry.name;
 
       if (entry.isDirectory()) {
+        if (isExcluded(relative, exclusions)) continue;
         pendingDirectories.push({ absolute, relative });
         continue;
       }

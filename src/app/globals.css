@@ -3853,6 +3853,37 @@ body {
   font-size: 11px;
 }
 
+.stash-sync-progress,
+.stash-not-configured {
+  margin: 12px 0;
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  background: #efede7;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.stash-sync-progress svg {
+  color: var(--purple);
+}
+
+.stash-not-configured {
+  min-height: 76px;
+  justify-content: center;
+  text-align: center;
+}
+
+.stash-sync-note {
+  margin-top: 10px;
+  display: block;
+  color: var(--ink-faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .library-management-message {
   position: fixed;
   z-index: 120;

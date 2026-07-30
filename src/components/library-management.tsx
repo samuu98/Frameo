@@ -57,6 +57,22 @@ interface LibraryPayload {
   };
 }
 
+interface StashSyncPayload {
+  configured: boolean;
+  running: boolean;
+  scenes: number;
+  images: number;
+  processed: number;
+  matched: number;
+  unmatched: number;
+  assignments: number;
+  people: number;
+  tags: number;
+  groups: number;
+  error: string | null;
+  completedAt: string | null;
+}
+
 const number = (value: number) => value.toLocaleString("it-IT");
 
 export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
@@ -65,6 +81,7 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
   const [uploadFolder, setUploadFolder] = useState("originals");
   const [folderQuery, setFolderQuery] = useState("");
   const [previewLimit, setPreviewLimit] = useState(100);
+  const [stashSync, setStashSync] = useState<StashSyncPayload | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -81,19 +98,29 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
     setUploadFolder(payload.settings.uploadFolder);
   }, []);
 
+  const loadStash = useCallback(async () => {
+    const response = await fetch("/api/library/stash");
+    const payload = await response.json().catch(() => null) as {
+      sync?: StashSyncPayload;
+    } | null;
+    if (response.ok && payload?.sync) setStashSync(payload.sync);
+  }, []);
+
   useEffect(() => {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "Errore libreria")
     );
-  }, [load]);
+    void loadStash();
+  }, [load, loadStash]);
 
   useEffect(() => {
-    if (!data?.scan.running && !data?.previews.running) return;
+    if (!data?.scan.running && !data?.previews.running && !stashSync?.running) return;
     const interval = window.setInterval(() => {
       void load().then(onChanged).catch(() => undefined);
+      void loadStash();
     }, 2500);
     return () => window.clearInterval(interval);
-  }, [data?.previews.running, data?.scan.running, load, onChanged]);
+  }, [data?.previews.running, data?.scan.running, load, loadStash, onChanged, stashSync?.running]);
 
   const visibleFolders = useMemo(() => {
     const query = folderQuery.trim().toLocaleLowerCase("it");
@@ -187,6 +214,21 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
     await fetch("/api/library/previews", { method: "DELETE" });
     setMessage("La coda si fermerà al termine del file corrente.");
     await load();
+  };
+
+  const startStashSync = async () => {
+    setMessage(null);
+    const response = await fetch("/api/library/stash", { method: "POST" });
+    const payload = await response.json().catch(() => null) as {
+      sync?: StashSyncPayload;
+      error?: string;
+    } | null;
+    if (!response.ok) {
+      setMessage(payload?.error ?? "Sincronizzazione Stash non avviata");
+      return;
+    }
+    if (payload?.sync) setStashSync(payload.sync);
+    setMessage("Sincronizzazione del catalogo Stash avviata.");
   };
 
   if (!data) {
@@ -350,6 +392,47 @@ export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
               </>
             )}
           </div>
+        </article>
+
+        <article className="library-job-card stash-sync-card">
+          <header>
+            <Database size={19} />
+            <div>
+              <h3>Catalogo Stash</h3>
+              <p>Importa persone, tag, gruppi e titoli associandoli agli stessi file.</p>
+            </div>
+          </header>
+          {stashSync?.configured ? (
+            <>
+              <div className="job-numbers">
+                <p><strong>{number(stashSync.matched)}</strong><span>corrispondenze</span></p>
+                <p><strong>{number(stashSync.people)}</strong><span>persone</span></p>
+                <p><strong>{number(stashSync.tags)}</strong><span>tag</span></p>
+                <p><strong>{number(stashSync.groups)}</strong><span>gruppi</span></p>
+              </div>
+              {stashSync.running ? (
+                <div className="stash-sync-progress">
+                  <LoaderCircle className="is-spinning" size={16} />
+                  <span>
+                    {number(stashSync.processed)} di {number(stashSync.scenes + stashSync.images)} elementi letti
+                  </span>
+                </div>
+              ) : null}
+              {stashSync.error ? <p className="job-error">{stashSync.error}</p> : null}
+              <button onClick={startStashSync} disabled={stashSync.running || data.scan.running}>
+                {stashSync.running ? <LoaderCircle className="is-spinning" size={16} /> : <RefreshCw size={16} />}
+                {stashSync.running ? "Sincronizzazione in corso…" : "Sincronizza da Stash"}
+              </button>
+              <small className="stash-sync-note">
+                I file originali non vengono copiati né modificati. Le immagini generate da Stash sono escluse dalla libreria.
+              </small>
+            </>
+          ) : (
+            <div className="stash-not-configured">
+              <Database size={22} />
+              <p>Collegamento Stash non configurato sul server.</p>
+            </div>
+          )}
         </article>
       </div>
 
