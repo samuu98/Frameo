@@ -25,6 +25,31 @@ const storageRoot = path.resolve(
     path.join(/* turbopackIgnore: true */ process.cwd(), "storage")
 );
 
+const videoMimeByExtension = new Map([
+  [".mp4", "video/mp4"],
+  [".m4v", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".mkv", "video/x-matroska"],
+  [".webm", "video/webm"],
+  [".avi", "video/x-msvideo"],
+  [".wmv", "video/x-ms-wmv"],
+  [".mpeg", "video/mpeg"],
+  [".mpg", "video/mpeg"]
+]);
+
+const imageMimeByExtension = new Map([
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".png", "image/png"],
+  [".webp", "image/webp"],
+  [".gif", "image/gif"],
+  [".heic", "image/heic"],
+  [".heif", "image/heif"],
+  [".tif", "image/tiff"],
+  [".tiff", "image/tiff"],
+  [".avif", "image/avif"]
+]);
+
 const includeRelations = {
   tags: { include: { tag: true } },
   people: { include: { person: true } },
@@ -85,7 +110,11 @@ export async function GET(request: Request) {
       where: {
         AND: [
           accessWhere,
-          { OR: [{ people: { none: {} } }, { groups: { none: {} } }] }
+          {
+            people: { none: {} },
+            tags: { none: {} },
+            groups: { none: {} }
+          }
         ]
       }
     })
@@ -245,13 +274,18 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "File mancante" }, { status: 400 });
     }
+    const demoIsVideo =
+      file.type.startsWith("video/") ||
+      videoMimeByExtension.has(
+        path.extname(file.name).toLocaleLowerCase("en")
+      );
     return NextResponse.json(
       {
         item: {
           id: randomUUID(),
           title: file.name.replace(/\.[^/.]+$/, ""),
           status: "PROCESSING",
-          kind: file.type.startsWith("video/") ? "VIDEO" : "IMAGE",
+          kind: demoIsVideo ? "VIDEO" : "IMAGE",
           bytes: String(file.size)
         },
         mode: "demo"
@@ -292,8 +326,20 @@ export async function POST(request: Request) {
 
     const uploaded = await streamUpload(request, importId);
     uploadedDirectory = path.dirname(uploaded.absolutePath);
-    const isVideo = uploaded.mimeType.startsWith("video/");
-    const isImage = uploaded.mimeType.startsWith("image/");
+    const extension = path.extname(uploaded.fileName).toLocaleLowerCase("en");
+    const inferredVideoMime = videoMimeByExtension.get(extension);
+    const inferredImageMime = imageMimeByExtension.get(extension);
+    const isVideo = uploaded.mimeType.startsWith("video/") || Boolean(inferredVideoMime);
+    const isImage = uploaded.mimeType.startsWith("image/") || Boolean(inferredImageMime);
+    const normalizedMimeType = isVideo
+      ? uploaded.mimeType.startsWith("video/")
+        ? uploaded.mimeType
+        : inferredVideoMime as string
+      : isImage
+        ? uploaded.mimeType.startsWith("image/")
+          ? uploaded.mimeType
+          : inferredImageMime as string
+        : uploaded.mimeType;
     if (!isVideo && !isImage) {
       await Promise.all([
         rm(path.dirname(uploaded.absolutePath), { recursive: true, force: true }),
@@ -319,7 +365,7 @@ export async function POST(request: Request) {
         title: uploaded.fileName.replace(/\.[^/.]+$/, ""),
         kind: isVideo ? MediaKind.VIDEO : MediaKind.IMAGE,
         status: MediaStatus.PROCESSING,
-        mimeType: uploaded.mimeType,
+        mimeType: normalizedMimeType,
         bytes: BigInt(uploaded.bytes),
         originalPath: uploaded.relativePath,
         sourceFileName: uploaded.fileName,
@@ -335,6 +381,7 @@ export async function POST(request: Request) {
         progress: 100,
         uploadedBytes: BigInt(uploaded.bytes),
         totalBytes: BigInt(uploaded.bytes),
+        mimeType: normalizedMimeType,
         mediaId: media.id,
         error: null
       }

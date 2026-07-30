@@ -208,9 +208,13 @@ const uploadMedia = (
     request.send(body);
   });
 
+const isVideoUploadFile = (file: Pick<File, "name" | "type">) =>
+  file.type.startsWith("video/") ||
+  /\.(mp4|m4v|mov|mkv|webm|avi|wmv|mpeg|mpg)$/i.test(file.name);
+
 const readVideoDuration = (file: File) =>
   new Promise<number | null>((resolve) => {
-    if (!file.type.startsWith("video/")) {
+    if (!isVideoUploadFile(file)) {
       resolve(null);
       return;
     }
@@ -1744,10 +1748,16 @@ function Inspector({
                   setPickerQuery("");
                 }}
               >
-                <Folder size={18} />
+                {item.group === "Da catalogare"
+                  ? <Inbox size={18} />
+                  : <Folder size={18} />}
                 <span>
                   <strong>{item.group}</strong>
-                  <small>Gruppo assegnato</small>
+                  <small>
+                    {item.group === "Da catalogare"
+                      ? "Nessun gruppo assegnato"
+                      : "Gruppo assegnato"}
+                  </small>
                 </span>
                 <ChevronRight size={16} />
               </button>
@@ -1803,6 +1813,7 @@ function UploadModal({
   }>>([]);
   const [forcedDuplicates, setForcedDuplicates] = useState<Set<number>>(new Set());
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [checkNonce, setCheckNonce] = useState(0);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -1860,12 +1871,18 @@ function UploadModal({
     return () => {
       active = false;
     };
-  }, [files]);
+  }, [checkNonce, files]);
 
   const filesToImport = files.filter(
     (_, index) => !duplicateChecks[index]?.duplicate || forcedDuplicates.has(index)
   );
   const duplicateCount = duplicateChecks.filter(({ duplicate }) => duplicate).length;
+  const duplicateIndexes = duplicateChecks.flatMap((check, index) =>
+    check.duplicate ? [index] : []
+  );
+  const allDuplicatesForced =
+    duplicateIndexes.length > 0 &&
+    duplicateIndexes.every((index) => forcedDuplicates.has(index));
   const skippedFiles = files.flatMap((file, index) => {
     const check = duplicateChecks[index];
     return check?.duplicate && !forcedDuplicates.has(index)
@@ -1932,7 +1949,26 @@ function UploadModal({
                   ? `Verifica di ${files.length} file…`
                   : `${filesToImport.length} pronti · ${duplicateCount} già presenti`}
               </strong>
-              <button onClick={() => setFiles([])}>Rimuovi tutti</button>
+              <div>
+                {duplicateCount ? (
+                  <button
+                    className={allDuplicatesForced ? "" : "import-all-duplicates"}
+                    onClick={() => setForcedDuplicates(
+                      allDuplicatesForced
+                        ? new Set()
+                        : new Set(duplicateIndexes)
+                    )}
+                  >
+                    {allDuplicatesForced ? "Escludi duplicati" : "Importa comunque tutti"}
+                  </button>
+                ) : null}
+                <button onClick={() => {
+                  setFiles([]);
+                  if (inputRef.current) inputRef.current.value = "";
+                }}>
+                  Rimuovi tutti
+                </button>
+              </div>
             </div>
             {files.slice(0, 8).map((file, index) => {
               const check = duplicateChecks[index];
@@ -1942,7 +1978,7 @@ function UploadModal({
                 className={check?.duplicate && !forced ? "upload-file-row is-duplicate" : "upload-file-row"}
                 key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
               >
-                <span>{file.type.startsWith("video") ? <Film size={17} /> : <ImageIcon size={17} />}</span>
+                <span>{isVideoUploadFile(file) ? <Film size={17} /> : <ImageIcon size={17} />}</span>
                 <p>
                   <strong>{file.name}</strong>
                   <small>
@@ -1976,24 +2012,37 @@ function UploadModal({
               </div>
             )})}
             {files.length > 8 ? <small className="more-files">e altri {files.length - 8} file</small> : null}
-            {checkError ? <p className="upload-check-error">{checkError}</p> : null}
+            {checkError ? (
+              <div className="upload-check-error">
+                <p>{checkError}</p>
+                <button onClick={() => setCheckNonce((current) => current + 1)}>
+                  Riprova verifica
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
         <div className="upload-options">
           <label>
-            <span>AGGIUNGI AL GRUPPO</span>
-            <button>
-              <Folder size={16} />
-              Da catalogare
-              <ChevronDown size={15} />
-            </button>
+            <span>STATO INIZIALE</span>
+            <div className="upload-catalog-state">
+              <Inbox size={17} />
+              <p>
+                <strong>Da catalogare</strong>
+                <small>Nessun performer, tag o gruppo assegnato</small>
+              </p>
+            </div>
           </label>
           <label>
-            <span>TAG AUTOMATICI</span>
-            <button className="toggle is-on" aria-label="Tag automatici attivi">
-              <i />
-            </button>
+            <span>ELABORAZIONE</span>
+            <div className="upload-processing-state">
+              <WandSparkles size={17} />
+              <p>
+                <strong>Automatica</strong>
+                <small>Metadati, miniatura e anteprima</small>
+              </p>
+            </div>
           </label>
         </div>
 
@@ -2006,7 +2055,12 @@ function UploadModal({
             <button onClick={onClose}>Annulla</button>
             <button
               className="confirm-upload"
-              disabled={!files.length || checking}
+              disabled={
+                !files.length ||
+                !filesToImport.length ||
+                checking ||
+                Boolean(checkError)
+              }
               onClick={() => {
                 onUpload(filesToImport, skippedFiles);
                 onClose();
@@ -2016,7 +2070,7 @@ function UploadModal({
                 ? "Verifica…"
                 : filesToImport.length
                   ? `Importa ${filesToImport.length}`
-                  : "Conferma verifica"}
+                  : "Tutti già presenti"}
               <ArrowRightIcon />
             </button>
           </div>
@@ -2351,7 +2405,10 @@ export function MediaWorkspace() {
     if (activeNav === "Preferiti") result = result.filter((item) => item.favorite);
     if (activeNav === "Da catalogare") {
       result = result.filter(
-        (item) => !item.people.length || item.group === "Da catalogare"
+        (item) =>
+          !item.people.length &&
+          !item.tags.length &&
+          item.group === "Da catalogare"
       );
     }
     if (activeNav === "Recenti") result = result.slice(0, 7);
@@ -2517,7 +2574,10 @@ export function MediaWorkspace() {
             image: demoMedia.filter(({ type }) => type === "image").length,
             video: demoMedia.filter(({ type }) => type === "video").length,
             uncatalogued: demoMedia.filter(
-              (item) => !item.people.length || item.group === "Da catalogare"
+              (item) =>
+                !item.people.length &&
+                !item.tags.length &&
+                item.group === "Da catalogare"
             ).length
           });
         }
@@ -3063,7 +3123,7 @@ export function MediaWorkspace() {
     const importIds = files.map(() => crypto.randomUUID());
     const created = files.map((file, index): MediaItem => {
       const localUrl = URL.createObjectURL(file);
-      const isVideo = file.type.startsWith("video");
+      const isVideo = isVideoUploadFile(file);
       return {
         id: `local-${importIds[index]}`,
         title: file.name.replace(/\.[^/.]+$/, ""),
@@ -3091,8 +3151,12 @@ export function MediaWorkspace() {
         ? `${files.length} ${files.length === 1 ? "import avviato" : "import avviati"}${skipped.length ? ` · ${skipped.length} già presenti` : ""}`
         : `${skipped.length} ${skipped.length === 1 ? "file già presente" : "file già presenti"} · nessun duplicato importato`
     );
+    if (files.length) setActiveNav("Gestione libreria");
 
     let nextUpload = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const failureMessages: string[] = [];
     const uploadNext = async () => {
       while (nextUpload < files.length) {
         const index = nextUpload;
@@ -3111,9 +3175,10 @@ export function MediaWorkspace() {
             }));
           });
           if (!payload.item || payload.item.id === localItem.id || !payload.item.createdAt) {
-            continue;
+            throw new Error("Il server non ha restituito il media importato");
           }
           const serverItem = persistedToMedia(payload.item, localItem.src);
+          succeeded += 1;
           setItems((current) =>
             current.map((item) => (item.id === localItem.id ? serverItem : item))
           );
@@ -3121,17 +3186,36 @@ export function MediaWorkspace() {
             current?.id === localItem.id ? serverItem : current
           );
         } catch (error) {
+          failed += 1;
+          failureMessages.push(
+            error instanceof Error ? error.message : "Importazione non riuscita"
+          );
           setItems((current) => current.filter((item) => item.id !== localItem.id));
           setInspected((current) => (current?.id === localItem.id ? null : current));
           URL.revokeObjectURL(localItem.src);
-          setToast(error instanceof Error ? error.message : "Importazione non riuscita");
         }
       }
     };
 
     void Promise.all(
       Array.from({ length: Math.min(2, files.length) }, () => uploadNext())
-    );
+    ).then(() => {
+      if (succeeded) setMediaRefreshNonce((current) => current + 1);
+      if (failed) {
+        setToast(
+          `${succeeded} importati · ${failed} non riusciti · ${failureMessages[0] ?? "Errore sconosciuto"}`
+        );
+      } else if (succeeded) {
+        setToast(
+          `${succeeded} ${succeeded === 1 ? "file caricato" : "file caricati"} · elaborazione visibile in Gestione libreria`
+        );
+      }
+      window.setTimeout(() => {
+        created.forEach(({ src }) => {
+          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+        });
+      }, 2500);
+    });
   };
 
   const startExternalScan = () => {

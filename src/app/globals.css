@@ -10119,3 +10119,124 @@ body {
     transform: none;
   }
 }
+
+.upload-files-head {
+  align-items: center;
+  gap: 12px;
+}
+
+.upload-file-row {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+}
+
+.upload-files-head > div {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.upload-files-head button.import-all-duplicates {
+  color: #5649d6;
+  font-weight: 780;
+}
+
+.upload-catalog-state,
+.upload-processing-state {
+  min-height: 46px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--purple);
+  background: var(--purple-pale);
+  border: 1px solid #d8d1ff;
+  border-radius: 7px;
+}
+
+.upload-catalog-state p,
+.upload-processing-state p,
+.upload-catalog-state strong,
+.upload-processing-state strong,
+.upload-catalog-state small,
+.upload-processing-state small {
+  margin: 0;
+  display: block;
+}
+
+.upload-catalog-state strong,
+.upload-processing-state strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.upload-catalog-state small,
+.upload-processing-state small {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-size: 8px;
+}
+
+.upload-processing-state {
+  background: #eef5ec;
+  border-color: #d2e2ce;
+  color: #4c7d43;
+}
+
+.upload-check-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.upload-check-error p {
+  margin: 0;
+}
+
+.upload-check-error button {
+  min-width: 104px;
+  height: 29px;
+  padding: 0 9px;
+  color: #fff;
+  background: #9a3934;
+  border: 0;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+@media (max-width: 560px) {
+  .upload-file-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .upload-file-row > button,
+  .upload-file-row > svg {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .upload-files-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .upload-files-head > div {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .upload-options {
+    align-items: stretch;
+  }
+
+  .upload-options label {
+    flex: 1;
+  }
+
+  .upload-catalog-state,
+  .upload-processing-state {
+    width: 100%;
+    min-height: 58px;
+  }
+}

@@ -58,10 +58,9 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   if (favorite === "false") filters.push({ favorite: false });
   if (uncatalogued) {
     filters.push({
-      OR: [
-        { people: { none: {} } },
-        { groups: { none: {} } }
-      ]
+      people: { none: {} },
+      tags: { none: {} },
+      groups: { none: {} }
     });
   }
 

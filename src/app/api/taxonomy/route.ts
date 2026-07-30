@@ -17,7 +17,7 @@ export async function GET() {
     return NextResponse.json({
       people: ["Sofia", "Luca", "Elena", "Jonas"],
       tags: ["viaggio", "estate", "drone", "ritratto", "architettura", "portfolio"],
-      groups: ["Australia 2026", "Portraits", "Urban studies", "Da catalogare"],
+      groups: ["Australia 2026", "Portraits", "Urban studies"],
       mode: "demo"
     });
   }
