@@ -49,12 +49,20 @@ function ReliablePersonImage({
   large?: boolean;
 }) {
   const sources = useMemo(
-    () => [...new Set([
-      `${image.displayUrl}?width=${large ? 1400 : 520}`,
-      image.previewUrl,
-      image.thumbnailUrl,
-      image.originalUrl
-    ].filter((source): source is string => Boolean(source)))],
+    () => [...new Set((large
+      ? [
+          `${image.displayUrl}?width=1400`,
+          image.previewUrl,
+          image.thumbnailUrl,
+          image.originalUrl
+        ]
+      : [
+          image.thumbnailUrl,
+          `${image.displayUrl}?width=520`,
+          image.previewUrl,
+          image.originalUrl
+        ]
+    ).filter((source): source is string => Boolean(source)))],
     [image.displayUrl, image.originalUrl, image.previewUrl, image.thumbnailUrl, large]
   );
   const [sourceIndex, setSourceIndex] = useState(0);
