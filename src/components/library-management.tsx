@@ -1,0 +1,359 @@
+"use client";
+
+import {
+  Check,
+  Database,
+  Film,
+  FolderCheck,
+  FolderInput,
+  HardDrive,
+  Image as ImageIcon,
+  LoaderCircle,
+  Play,
+  RefreshCw,
+  Save,
+  Square,
+  StopCircle
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+interface LibraryPayload {
+  settings: {
+    scanFolders: string[];
+    uploadFolder: string;
+  };
+  paths: {
+    scanRoot: string | null;
+    uploadRoot: string;
+    storageRoot: string;
+  };
+  availableFolders: string[];
+  stats: {
+    total: number;
+    videos: number;
+    images: number;
+    videosWithoutThumbnail: number;
+    videosWithoutPreview: number;
+    imagesWithoutThumbnail: number;
+  };
+  scan: {
+    configured: boolean;
+    running: boolean;
+    discovered: number;
+    supported: number;
+    added: number;
+    skipped: number;
+    error: string | null;
+    completedAt: string | null;
+  };
+  previews: {
+    running: boolean;
+    cancelling: boolean;
+    requested: number;
+    completed: number;
+    failed: number;
+    currentTitle: string | null;
+    error: string | null;
+  };
+}
+
+const number = (value: number) => value.toLocaleString("it-IT");
+
+export function LibraryManagement({ onChanged }: { onChanged?: () => void }) {
+  const [data, setData] = useState<LibraryPayload | null>(null);
+  const [scanFolders, setScanFolders] = useState<string[]>([""]);
+  const [uploadFolder, setUploadFolder] = useState("originals");
+  const [folderQuery, setFolderQuery] = useState("");
+  const [previewLimit, setPreviewLimit] = useState(100);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const response = await fetch("/api/library");
+    const payload = (await response.json().catch(() => null)) as
+      | (LibraryPayload & { error?: string })
+      | null;
+    if (!response.ok || !payload) {
+      throw new Error(payload?.error ?? "Impossibile leggere la libreria");
+    }
+    setData(payload);
+    setScanFolders(payload.settings.scanFolders);
+    setUploadFolder(payload.settings.uploadFolder);
+  }, []);
+
+  useEffect(() => {
+    void load().catch((error) =>
+      setMessage(error instanceof Error ? error.message : "Errore libreria")
+    );
+  }, [load]);
+
+  useEffect(() => {
+    if (!data?.scan.running && !data?.previews.running) return;
+    const interval = window.setInterval(() => {
+      void load().then(onChanged).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(interval);
+  }, [data?.previews.running, data?.scan.running, load, onChanged]);
+
+  const visibleFolders = useMemo(() => {
+    const query = folderQuery.trim().toLocaleLowerCase("it");
+    return (data?.availableFolders ?? [])
+      .filter((folder) =>
+        (folder || "Tutta la libreria").toLocaleLowerCase("it").includes(query)
+      )
+      .slice(0, 120);
+  }, [data?.availableFolders, folderQuery]);
+
+  const toggleFolder = (folder: string) => {
+    setScanFolders((current) => {
+      if (folder === "") return [""];
+      const withoutRoot = current.filter((entry) => entry !== "");
+      if (withoutRoot.includes(folder)) {
+        const next = withoutRoot.filter((entry) => entry !== folder);
+        return next.length ? next : [""];
+      }
+      return [...withoutRoot, folder].sort((left, right) =>
+        left.localeCompare(right)
+      );
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/library", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanFolders, uploadFolder })
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | (LibraryPayload & { error?: string })
+        | null;
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error ?? "Salvataggio non riuscito");
+      }
+      setData(payload);
+      setMessage("Cartelle salvate. La prossima scansione userà questa selezione.");
+      onChanged?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Salvataggio non riuscito");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startScan = async () => {
+    setMessage(null);
+    const response = await fetch("/api/library/scan", { method: "POST" });
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    if (!response.ok) {
+      setMessage(payload?.error ?? "Scansione non avviata");
+      return;
+    }
+    setMessage("Scansione avviata in background.");
+    await load();
+  };
+
+  const startPreviews = async (mode: "MISSING_ANY" | "REGENERATE") => {
+    setMessage(null);
+    const response = await fetch("/api/library/previews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode,
+        kind: "VIDEO",
+        limit: previewLimit
+      })
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    if (!response.ok) {
+      setMessage(payload?.error ?? "Coda anteprime non avviata");
+      return;
+    }
+    setMessage(
+      mode === "REGENERATE"
+        ? "Rigenerazione anteprime avviata."
+        : "Generazione delle anteprime mancanti avviata."
+    );
+    await load();
+  };
+
+  const cancelPreviews = async () => {
+    await fetch("/api/library/previews", { method: "DELETE" });
+    setMessage("La coda si fermerà al termine del file corrente.");
+    await load();
+  };
+
+  if (!data) {
+    return (
+      <section className="library-management loading-management">
+        <LoaderCircle className="is-spinning" size={24} />
+        <p>{message ?? "Lettura configurazione libreria…"}</p>
+      </section>
+    );
+  }
+
+  const previewProgress = data.previews.requested
+    ? Math.round(
+        ((data.previews.completed + data.previews.failed) /
+          data.previews.requested) *
+          100
+      )
+    : 0;
+
+  return (
+    <section className="library-management">
+      <div className="management-hero library-management-hero">
+        <div>
+          <span><HardDrive size={15} /> ARCHIVIO & DERIVATI</span>
+          <h2>Gestione libreria</h2>
+          <p>Decidi quali cartelle indicizzare, dove salvare gli upload e quando generare le anteprime.</p>
+        </div>
+        <button onClick={() => void load()}>
+          <RefreshCw size={17} /> Aggiorna stato
+        </button>
+      </div>
+
+      <div className="library-stat-grid">
+        <div><Database size={20} /><p><strong>{number(data.stats.total)}</strong><span>Media indicizzati</span></p></div>
+        <div><Film size={20} /><p><strong>{number(data.stats.videos)}</strong><span>Video</span></p></div>
+        <div><ImageIcon size={20} /><p><strong>{number(data.stats.images)}</strong><span>Immagini</span></p></div>
+        <div className={data.stats.videosWithoutThumbnail ? "has-warning" : ""}>
+          <Square size={20} />
+          <p><strong>{number(data.stats.videosWithoutThumbnail)}</strong><span>Miniature video mancanti</span></p>
+        </div>
+      </div>
+
+      <div className="library-management-grid">
+        <article className="library-settings-card">
+          <header>
+            <span><FolderInput size={19} /></span>
+            <div><h3>Cartelle da scansionare</h3><p>Radice montata: <code>{data.paths.scanRoot ?? "non configurata"}</code></p></div>
+          </header>
+          <label className="folder-search">
+            Cerca tra le cartelle disponibili
+            <input
+              value={folderQuery}
+              onChange={(event) => setFolderQuery(event.target.value)}
+              placeholder="es. xxx/video"
+            />
+          </label>
+          <div className="folder-choice-list">
+            {visibleFolders.map((folder) => {
+              const checked = scanFolders.includes(folder);
+              return (
+                <button
+                  className={checked ? "is-selected" : ""}
+                  key={folder || "__root__"}
+                  onClick={() => toggleFolder(folder)}
+                >
+                  <i>{checked ? <Check size={13} /> : null}</i>
+                  <span>{folder || "Tutta la libreria montata"}</span>
+                  {folder === "" ? <em>radice</em> : null}
+                </button>
+              );
+            })}
+          </div>
+          <p className="folder-selection-summary">
+            <FolderCheck size={15} />
+            {scanFolders[0] === ""
+              ? "Verranno scansionate tutte le sottocartelle."
+              : `${scanFolders.length} cartelle selezionate.`}
+          </p>
+        </article>
+
+        <article className="library-settings-card">
+          <header>
+            <span><HardDrive size={19} /></span>
+            <div><h3>Destinazione upload</h3><p>Storage scrivibile: <code>{data.paths.storageRoot}</code></p></div>
+          </header>
+          <label className="upload-folder-field">
+            CARTELLA RELATIVA
+            <input
+              value={uploadFolder}
+              onChange={(event) => setUploadFolder(event.target.value)}
+              placeholder="originals"
+            />
+          </label>
+          <div className="resolved-folder">
+            <span>Percorso risultante</span>
+            <code>{data.paths.storageRoot}/{uploadFolder.replace(/^\/+/, "")}</code>
+          </div>
+          <p>Ogni upload viene salvato in una sottocartella univoca; gli originali non vengono sovrascritti.</p>
+          <button className="save-library-settings" onClick={save} disabled={saving}>
+            {saving ? <LoaderCircle className="is-spinning" size={16} /> : <Save size={16} />}
+            {saving ? "Salvataggio…" : "Salva configurazione"}
+          </button>
+        </article>
+      </div>
+
+      <div className="library-jobs-grid">
+        <article className="library-job-card">
+          <header><FolderInput size={19} /><div><h3>Scansione libreria</h3><p>Ricerca ricorsiva dei media supportati.</p></div></header>
+          <div className="job-numbers">
+            <p><strong>{number(data.scan.discovered)}</strong><span>file letti</span></p>
+            <p><strong>{number(data.scan.supported)}</strong><span>supportati</span></p>
+            <p><strong>{number(data.scan.added)}</strong><span>nuovi</span></p>
+            <p><strong>{number(data.scan.skipped)}</strong><span>già presenti</span></p>
+          </div>
+          {data.scan.error ? <p className="job-error">{data.scan.error}</p> : null}
+          <button onClick={startScan} disabled={data.scan.running}>
+            {data.scan.running ? <LoaderCircle className="is-spinning" size={16} /> : <Play size={16} />}
+            {data.scan.running ? "Scansione in corso…" : "Avvia scansione completa"}
+          </button>
+        </article>
+
+        <article className="library-job-card">
+          <header><Film size={19} /><div><h3>Anteprime video</h3><p>Miniatura statica e clip riprodotta soltanto al passaggio del cursore.</p></div></header>
+          <div className="preview-missing-summary">
+            <p><strong>{number(data.stats.videosWithoutThumbnail)}</strong><span>senza miniatura</span></p>
+            <p><strong>{number(data.stats.videosWithoutPreview)}</strong><span>senza clip hover</span></p>
+          </div>
+          {data.previews.running ? (
+            <div className="preview-queue-progress">
+              <div><span style={{ width: `${previewProgress}%` }} /></div>
+              <p>
+                <strong>{previewProgress}% · {data.previews.completed}/{data.previews.requested}</strong>
+                <span>{data.previews.currentTitle ?? "Preparazione file…"}</span>
+              </p>
+            </div>
+          ) : null}
+          {data.previews.error ? <p className="job-error">{data.previews.error}</p> : null}
+          <label className="preview-limit">
+            FILE PER QUESTA CODA
+            <select value={previewLimit} onChange={(event) => setPreviewLimit(Number(event.target.value))}>
+              <option value={25}>25</option>
+              <option value={100}>100</option>
+              <option value={500}>500</option>
+              <option value={2000}>2.000</option>
+              <option value={10000}>Tutti (max 10.000)</option>
+            </select>
+          </label>
+          <div className="preview-job-actions">
+            {data.previews.running ? (
+              <button className="stop-preview-job" onClick={cancelPreviews}>
+                <StopCircle size={16} /> Ferma dopo il file corrente
+              </button>
+            ) : (
+              <>
+                <button onClick={() => void startPreviews("MISSING_ANY")}>
+                  <Play size={16} /> Genera mancanti
+                </button>
+                <button onClick={() => void startPreviews("REGENERATE")}>
+                  <RefreshCw size={16} /> Rigenera
+                </button>
+              </>
+            )}
+          </div>
+        </article>
+      </div>
+
+      {message ? <div className="library-management-message">{message}</div> : null}
+    </section>
+  );
+}

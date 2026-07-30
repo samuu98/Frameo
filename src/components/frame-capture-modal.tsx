@@ -51,7 +51,9 @@ export function FrameCaptureModal({
   const videoRef = useRef<HTMLVideoElement>(null);
   const frameRate = Math.max(1, item.frameRate ?? 30);
   const frameDuration = 1000 / frameRate;
-  const durationMs = Math.max(frameDuration, item.durationMs ?? 60_000);
+  const [durationMs, setDurationMs] = useState(
+    Math.max(frameDuration, item.durationMs ?? 60_000)
+  );
   const initial = Math.max(0, Math.min(initialTimeMs, durationMs - frameDuration));
   const [positionMs, setPositionMs] = useState(initial);
   const [playing, setPlaying] = useState(false);
@@ -181,6 +183,10 @@ export function FrameCaptureModal({
                 playsInline
                 preload="auto"
                 onLoadedMetadata={(event) => {
+                  const measuredDuration = Math.round(event.currentTarget.duration * 1000);
+                  if (Number.isFinite(measuredDuration) && measuredDuration > frameDuration) {
+                    setDurationMs(measuredDuration);
+                  }
                   event.currentTarget.currentTime = positionMs / 1000;
                   setReady(true);
                 }}

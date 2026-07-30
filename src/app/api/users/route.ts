@@ -1,4 +1,4 @@
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/access-control";
@@ -99,6 +99,15 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof Error && error.message === "ADMIN_REQUIRED") {
       return NextResponse.json({ error: "Permessi amministratore richiesti" }, { status: 403 });
+    }
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: "Esiste già un utente con questa email" },
+        { status: 409 }
+      );
     }
     throw error;
   }

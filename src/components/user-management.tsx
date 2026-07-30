@@ -145,7 +145,7 @@ function UserDrawer({
   );
 }
 
-export function UserManagement() {
+export function UserManagement({ onReady }: { onReady?: () => void }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const [query, setQuery] = useState("");
@@ -229,6 +229,7 @@ export function UserManagement() {
                 setUsers((current) => [...current, payload.user as ManagedUser]);
                 setOnboarding(false);
                 setAdding(false);
+                onReady?.();
               })
               .catch((cause) => setError(cause instanceof Error ? cause.message : "Creazione utente non riuscita"));
           }}>

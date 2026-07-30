@@ -17,6 +17,23 @@ deve installare Node.js, Prisma o compilare l'applicazione.
 
 5. Apri `http://localhost:3000`.
 
+## Libreria esterna
+
+Per indicizzare una cartella già esistente senza copiarla nel volume di Frameo,
+imposta `EXTERNAL_MEDIA_HOST_PATH` nel file `.env` e avvia anche l'override:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.external.yml \
+  up -d
+```
+
+La cartella host viene montata in sola lettura. Dalla pagina **Gestione
+libreria** puoi scegliere quali sottocartelle scansionare, avviare una nuova
+scansione, cambiare la cartella relativa degli upload e generare o rigenerare le
+miniature e le clip di anteprima mancanti.
+
 Se il package GHCR è privato, esegui prima `docker login ghcr.io` oppure usa
 l'installazione offline.
 
@@ -53,4 +70,3 @@ docker compose logs --tail 100 frameo
 ```
 
 Entrambi i servizi devono risultare `healthy`.
-

@@ -14,6 +14,7 @@ services:
       MAX_UPLOAD_BYTES: "5368709120"
       DEMO_MODE: "false"
       FRAMEO_SEED_DEMO: "false"
+      FRAMEO_GENERATE_HLS: ${FRAMEO_GENERATE_HLS:-false}
       NEXT_PUBLIC_APP_NAME: Frameo
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE_MB:-512}
     volumes:

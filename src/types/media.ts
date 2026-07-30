@@ -16,6 +16,8 @@ export interface MediaItem {
   title: string;
   type: MediaType;
   src: string;
+  mimeType?: string;
+  thumbnailUrl?: string | null;
   previewUrl?: string | null;
   originalUrl?: string | null;
   streamUrl?: string | null;
@@ -39,7 +41,22 @@ export interface MediaItem {
   sourceFileName?: string;
   sourceMediaId?: string | null;
   sourceTimeMs?: number | null;
+  processingStage?: string;
+  processingProgress?: number;
+  processingState?: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  processingError?: string | null;
   aspect: "portrait" | "landscape" | "square" | "wide";
+}
+
+export interface ProcessingJobRecord {
+  id: string;
+  operation: string;
+  state: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  progress: number;
+  error: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
 }
 
 export interface PersistedMediaRecord {
@@ -47,6 +64,7 @@ export interface PersistedMediaRecord {
   title: string;
   kind: "IMAGE" | "VIDEO";
   status: "UPLOADING" | "PROCESSING" | "READY" | "ERROR";
+  mimeType: string;
   bytes: string;
   width: number | null;
   height: number | null;
@@ -62,6 +80,7 @@ export interface PersistedMediaRecord {
   sourceFileName?: string | null;
   sourceMediaId?: string | null;
   sourceTimeMs?: number | null;
+  jobs?: ProcessingJobRecord[];
   markers?: HighlightMarker[];
   duplicateCount?: number;
   tags: Array<{ name: string }>;

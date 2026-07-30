@@ -1,0 +1,8 @@
+services:
+  frameo:
+    environment:
+      EXTERNAL_MEDIA_ROOT: /app/storage/external/library
+      EXTERNAL_MEDIA_KEY: external-library
+      FRAMEO_SCAN_EXTERNAL_ON_START: ${FRAMEO_SCAN_EXTERNAL_ON_START:-true}
+    volumes:
+      - ${EXTERNAL_MEDIA_HOST_PATH:?Set EXTERNAL_MEDIA_HOST_PATH in .env}:/app/storage/external/library:ro

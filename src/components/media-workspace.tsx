@@ -19,6 +19,7 @@ import {
   Folder,
   FolderInput,
   Grid2X2,
+  HardDrive,
   Heart,
   Image as ImageIcon,
   Inbox,
@@ -31,7 +32,6 @@ import {
   Menu,
   MoreHorizontal,
   PanelRightClose,
-  Pause,
   PencilLine,
   Play,
   Plus,
@@ -79,6 +79,7 @@ import { HighlightsPlayer } from "@/components/highlights-player";
 import { OrganizeFilesModal } from "@/components/organize-files-modal";
 import { UserManagement } from "@/components/user-management";
 import { VideoEditorModal } from "@/components/video-editor-modal";
+import { LibraryManagement } from "@/components/library-management";
 
 const navItems = [
   { label: "Libreria", icon: LayoutGrid },
@@ -94,9 +95,17 @@ const organizeItems = [
 ];
 
 const adminItems = [
+  { label: "Gestione libreria", icon: HardDrive },
   { label: "Duplicati", icon: CopyCheck },
   { label: "Utenti & accessi", icon: Shield }
 ];
+
+interface TaxonomyEntry {
+  id: string;
+  name: string;
+  color?: string | null;
+  count: number;
+}
 
 const formatBytes = (bytes: number) => {
   if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
@@ -112,49 +121,140 @@ const formatDuration = (milliseconds: number | null) => {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
-const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): MediaItem => ({
-  id: item.id,
-  title: item.title,
-  type: item.kind === "VIDEO" ? "video" : "image",
-  src: item.thumbnailUrl ?? item.previewUrl ?? fallbackSrc ?? item.originalUrl,
-  previewUrl: item.previewUrl,
-  originalUrl: item.originalUrl,
-  streamUrl: item.streamUrl,
-  accent: item.dominantColor ?? "#817A70",
-  duration: item.kind === "VIDEO" ? formatDuration(item.durationMs) : undefined,
-  durationMs: item.durationMs,
-  frameRate: item.frameRate,
-  dimensions:
-    item.width && item.height ? `${item.width} × ${item.height}` : "Analisi in corso",
-  size: formatBytes(Number(item.bytes)),
-  date: new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric"
-  }).format(new Date(item.createdAt)),
-  createdAt: item.createdAt,
-  people: item.people.map(({ name }) => name),
-  tags: item.tags.map(({ name }) => name),
-  group: item.groups[0]?.name ?? "Da catalogare",
-  status:
-    item.status === "READY"
-      ? "ready"
-      : item.status === "ERROR"
-        ? "error"
-        : "processing",
-  favorite: item.favorite,
-  markers: item.markers ?? [],
-  duplicateCount: item.duplicateCount ?? 0,
-  sourceFileName: item.sourceFileName ?? undefined,
-  sourceMediaId: item.sourceMediaId,
-  sourceTimeMs: item.sourceTimeMs,
-  aspect:
-    item.width && item.height && item.height > item.width * 1.12
-      ? "portrait"
-      : item.width && item.height && item.width > item.height * 1.45
-        ? "wide"
-        : "landscape"
-});
+const processingLabels: Record<string, string> = {
+  queued: "In coda",
+  "image:analyze": "Analisi immagine",
+  "image:thumbnail": "Creazione miniatura",
+  "image:preview": "Creazione anteprima",
+  "video:analyze": "Analisi video e metadati",
+  "video:thumbnail": "Estrazione miniatura",
+  "video:preview": "Montaggio anteprima rappresentativa",
+  "video:stream": "Preparazione streaming HLS",
+  finalizing: "Indicizzazione finale",
+  "video-hls-and-preview": "Conversione video",
+  "image-preview": "Elaborazione immagine"
+};
+
+const processingLabel = (operation?: string) =>
+  operation ? processingLabels[operation] ?? operation : "Caricamento sul server";
+
+const uploadMedia = (
+  file: File,
+  onProgress: (progress: number) => void
+) =>
+  new Promise<{ item?: PersistedMediaRecord }>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const body = new FormData();
+    body.append("file", file);
+    request.open("POST", "/api/media");
+    request.responseType = "json";
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      }
+    };
+    request.onerror = () => reject(new Error("Connessione interrotta durante l’importazione"));
+    request.onabort = () => reject(new Error("Importazione annullata"));
+    request.onload = () => {
+      const payload = request.response as {
+        item?: PersistedMediaRecord;
+        error?: string;
+      } | null;
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(payload?.error ?? "Importazione non riuscita"));
+        return;
+      }
+      onProgress(100);
+      resolve(payload ?? {});
+    };
+    request.send(body);
+  });
+
+const readVideoDuration = (file: File) =>
+  new Promise<number | null>((resolve) => {
+    if (!file.type.startsWith("video/")) {
+      resolve(null);
+      return;
+    }
+    const source = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const finish = (value: number | null) => {
+      window.clearTimeout(timeout);
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(source);
+      resolve(value);
+    };
+    const timeout = window.setTimeout(() => finish(null), 10_000);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const durationMs = Math.round(video.duration * 1000);
+      finish(Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null);
+    };
+    video.onerror = () => finish(null);
+    video.src = source;
+  });
+
+const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): MediaItem => {
+  const latestJob = [...(item.jobs ?? [])].sort(
+    (left, right) =>
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  )[0];
+
+  return {
+    id: item.id,
+    title: item.title,
+    type: item.kind === "VIDEO" ? "video" : "image",
+    src: item.thumbnailUrl ?? item.previewUrl ?? fallbackSrc ?? item.originalUrl,
+    mimeType: item.mimeType,
+    thumbnailUrl: item.thumbnailUrl,
+    previewUrl: item.previewUrl,
+    originalUrl: item.originalUrl,
+    streamUrl: item.streamUrl,
+    accent: item.dominantColor ?? "#817A70",
+    duration: item.kind === "VIDEO" ? formatDuration(item.durationMs) : undefined,
+    durationMs: item.durationMs,
+    frameRate: item.frameRate,
+    dimensions:
+      item.width && item.height ? `${item.width} × ${item.height}` : "Analisi in corso",
+    size: formatBytes(Number(item.bytes)),
+    date: new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    }).format(new Date(item.createdAt)),
+    createdAt: item.createdAt,
+    people: item.people.map(({ name }) => name),
+    tags: item.tags.map(({ name }) => name),
+    group: item.groups[0]?.name ?? "Da catalogare",
+    status:
+      item.status === "READY"
+        ? "ready"
+        : item.status === "ERROR"
+          ? "error"
+          : "processing",
+    favorite: item.favorite,
+    markers: item.markers ?? [],
+    duplicateCount: item.duplicateCount ?? 0,
+    sourceFileName: item.sourceFileName ?? undefined,
+    sourceMediaId: item.sourceMediaId,
+    sourceTimeMs: item.sourceTimeMs,
+    processingStage: latestJob
+      ? processingLabel(latestJob.operation)
+      : item.status === "READY"
+        ? "Completato"
+        : "In attesa dell’elaborazione",
+    processingProgress: latestJob?.progress ?? (item.status === "READY" ? 100 : 0),
+    processingState: latestJob?.state,
+    processingError: latestJob?.error,
+    aspect:
+      item.width && item.height && item.height > item.width * 1.12
+        ? "portrait"
+        : item.width && item.height && item.width > item.height * 1.45
+          ? "wide"
+          : "landscape"
+  };
+};
 
 function Logo() {
   return (
@@ -319,12 +419,152 @@ function StatusRail({ items }: { items: MediaItem[] }) {
         </span>
         <div>
           <strong>{processing.length} media in elaborazione</strong>
-          <p>{processing[0]?.title}</p>
+          <p>
+            {processing[0]?.processingStage ?? "Caricamento sul server"}
+            {typeof processing[0]?.processingProgress === "number"
+              ? ` · ${processing[0].processingProgress}%`
+              : ""}
+          </p>
         </div>
       </div>
       <button aria-label="Apri coda">
         <ChevronRight size={17} />
       </button>
+    </section>
+  );
+}
+
+interface ExternalScanState {
+  configured: boolean;
+  running: boolean;
+  discovered: number;
+  supported: number;
+  added: number;
+  skipped: number;
+  error: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+function ExternalLibraryRail({
+  scan,
+  onScan
+}: {
+  scan: ExternalScanState | null;
+  onScan: () => void;
+}) {
+  if (!scan?.configured) return null;
+
+  return (
+    <section className="external-library-rail" aria-label="Libreria esterna">
+      <span className={scan.running ? "status-icon is-running" : "status-icon"}>
+        {scan.running ? <LoaderCircle size={17} /> : <FolderInput size={17} />}
+      </span>
+      <div>
+        <strong>
+          {scan.running
+            ? "Indicizzazione disco esterno"
+            : scan.error
+              ? "Scansione interrotta"
+              : "Disco esterno collegato"}
+        </strong>
+        <p>
+          {scan.running
+            ? `${scan.supported.toLocaleString("it-IT")} media trovati · ${scan.added.toLocaleString("it-IT")} nuovi`
+            : scan.error
+              ? scan.error
+              : `${scan.added.toLocaleString("it-IT")} nuovi · ${scan.skipped.toLocaleString("it-IT")} già presenti`}
+        </p>
+      </div>
+      <button onClick={onScan} disabled={scan.running}>
+        {scan.running ? "Scansione…" : "Scansiona"}
+      </button>
+    </section>
+  );
+}
+
+function TaxonomyManager({
+  kind,
+  entries,
+  onCreate,
+  onOpen
+}: {
+  kind: "people" | "tags";
+  entries: TaxonomyEntry[];
+  onCreate: (name: string) => void;
+  onOpen: (name: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const isPeople = kind === "people";
+
+  return (
+    <section className="taxonomy-manager">
+      <header>
+        <div>
+          <span>{isPeople ? <UsersRound size={17} /> : <Tag size={17} />}</span>
+          <div>
+            <strong>{isPeople ? "Persone" : "Tag"}</strong>
+            <small>
+              {entries.length
+                ? `${entries.length} ${isPeople ? "persone" : "tag"} disponibili`
+                : `Crea il primo ${isPeople ? "profilo" : "tag"}`}
+            </small>
+          </div>
+        </div>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!name.trim()) return;
+            onCreate(name.trim());
+            setName("");
+          }}
+        >
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={isPeople ? "Nome persona" : "Nome tag"}
+          />
+          <button type="submit">
+            <Plus size={14} />
+            Aggiungi
+          </button>
+        </form>
+      </header>
+      {entries.length ? (
+        <div className="taxonomy-grid">
+          {entries.map((entry) => (
+            <button key={entry.id} onClick={() => onOpen(entry.name)}>
+              <span
+                style={{
+                  background: isPeople
+                    ? undefined
+                    : entry.color ?? "#8B5CF6"
+                }}
+              >
+                {isPeople
+                  ? entry.name
+                      .split(" ")
+                      .map((part) => part[0])
+                      .join("")
+                      .slice(0, 2)
+                  : <Tag size={15} />}
+              </span>
+              <p>
+                <strong>{entry.name}</strong>
+                <small>
+                  {entry.count.toLocaleString("it-IT")} media
+                </small>
+              </p>
+              <ChevronRight size={15} />
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="taxonomy-empty">
+          {isPeople ? <UsersRound size={22} /> : <Tag size={22} />}
+          <p>Nessun elemento creato.</p>
+        </div>
+      )}
     </section>
   );
 }
@@ -350,6 +590,19 @@ function MediaCard({
 }) {
   const isProcessing = item.status === "processing";
   const hoverVideoRef = useRef<HTMLVideoElement>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const needsVideoPlaceholder = item.type === "video" && !item.thumbnailUrl;
+
+  useEffect(() => {
+    const video = hoverVideoRef.current;
+    if (!video || !previewing) return;
+    video.currentTime = 0;
+    void video.play().catch(() => undefined);
+    return () => {
+      video.pause();
+      video.currentTime = 0;
+    };
+  }, [previewing]);
 
   return (
     <article
@@ -360,23 +613,24 @@ function MediaCard({
         isProcessing ? "is-processing" : ""
       ].join(" ")}
       onClick={() => (quickMode ? undefined : onOpen(item))}
-      onMouseEnter={() => {
-        if (hoverVideoRef.current) {
-          hoverVideoRef.current.currentTime = 0;
-          void hoverVideoRef.current.play().catch(() => undefined);
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse" || event.pointerType === "pen") {
+          setPreviewing(true);
         }
       }}
-      onMouseLeave={() => {
-        if (hoverVideoRef.current) {
-          hoverVideoRef.current.pause();
-          hoverVideoRef.current.currentTime = 0;
-        }
-      }}
+      onPointerLeave={() => setPreviewing(false)}
     >
       <div className="media-visual" style={{ backgroundColor: item.accent }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={item.src} alt="" loading="lazy" />
-        {item.type === "video" && item.previewUrl ? (
+        {needsVideoPlaceholder ? (
+          <div className="video-card-placeholder">
+            <Film size={28} />
+            <span>Video originale</span>
+          </div>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={item.src} alt="" loading="lazy" />
+        )}
+        {item.type === "video" && item.previewUrl && previewing ? (
           <video
             ref={hoverVideoRef}
             className="hover-video-preview"
@@ -385,7 +639,7 @@ function MediaCard({
             muted
             loop
             playsInline
-            preload="metadata"
+            preload="none"
           />
         ) : null}
         <div className="media-shade" />
@@ -439,7 +693,15 @@ function MediaCard({
         {isProcessing ? (
           <div className="processing-overlay">
             <WandSparkles size={20} />
-            <strong>Preparazione anteprima</strong>
+            <strong>{item.processingStage ?? "Caricamento sul server"}</strong>
+            <span>
+              <i style={{ width: `${item.processingProgress ?? 8}%` }} />
+            </span>
+            <small>
+              {typeof item.processingProgress === "number"
+                ? `${item.processingProgress}%`
+                : "Upload in corso"}
+            </small>
           </div>
         ) : null}
 
@@ -481,37 +743,50 @@ function MediaCard({
 
 function Inspector({
   item,
+  availablePeople,
   onClose,
   onFavorite,
   onAddTag,
+  onRemoveTag,
+  onAddPerson,
+  onRemovePerson,
   onAddMarker,
   onEdit,
   onRename,
   onCapture
 }: {
   item: MediaItem;
+  availablePeople: string[];
   onClose: () => void;
   onFavorite: () => void;
   onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
+  onAddPerson: (name: string) => void;
+  onRemovePerson: (name: string) => void;
   onAddMarker: (marker: HighlightMarker) => void;
   onEdit: () => void;
   onRename: (name: string) => void;
   onCapture: (positionMs: number) => void;
 }) {
   const [tab, setTab] = useState<"info" | "organizza" | "attivita">("info");
-  const [playing, setPlaying] = useState(false);
   const [tagInput, setTagInput] = useState("");
+  const [personInput, setPersonInput] = useState("");
+  const [personOpen, setPersonOpen] = useState(false);
   const [markerOpen, setMarkerOpen] = useState(false);
   const [markerLabel, setMarkerLabel] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(item.title);
+  const playerRef = useRef<HTMLVideoElement>(null);
   const [currentPosition, setCurrentPosition] = useState(
     Math.min(18_000, item.durationMs ?? 18_000)
   );
+  const playableSource = item.originalUrl ?? item.previewUrl ?? item.src;
 
   useEffect(() => {
     setRenameValue(item.title);
     setRenameOpen(false);
+    setPersonInput("");
+    setPersonOpen(false);
   }, [item.id, item.title]);
 
   return (
@@ -536,39 +811,51 @@ function Inspector({
       </div>
 
       <div className="inspector-preview" style={{ backgroundColor: item.accent }}>
-        {playing && item.type === "video" && (item.originalUrl || item.previewUrl) ? (
+        {item.type === "video" ? (
           <video
-            src={item.originalUrl ?? item.previewUrl ?? undefined}
-            poster={item.src}
-            autoPlay
-            muted
+            ref={playerRef}
+            src={playableSource}
+            poster={item.thumbnailUrl ?? undefined}
+            controls
             playsInline
+            preload="metadata"
             onTimeUpdate={(event) => setCurrentPosition(event.currentTarget.currentTime * 1000)}
           />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.src} alt={item.title} />
         )}
-        {item.type === "video" ? (
-          <button className="preview-play" onClick={() => setPlaying((value) => !value)}>
-            {playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
-          </button>
-        ) : null}
         <div className="preview-actions">
           {item.type === "video" ? (
-            <button onClick={() => onCapture(currentPosition)} aria-label="Cattura fotogramma">
+            <button type="button" onClick={() => onCapture(currentPosition)} aria-label="Cattura fotogramma" title="Cattura fotogramma">
               <Camera size={17} />
             </button>
           ) : null}
-          <button aria-label="Vista a schermo intero">
+          <button
+            type="button"
+            aria-label="Vista a schermo intero"
+            title="Schermo intero"
+            onClick={() => {
+              const target = playerRef.current ??
+                document.querySelector<HTMLElement>(".inspector-preview > img");
+              void target?.requestFullscreen?.();
+            }}
+          >
             <Maximize2 size={17} />
           </button>
-          <button aria-label="Scarica originale">
+          <a
+            href={item.originalUrl ?? item.src}
+            download={item.sourceFileName ?? item.title}
+            aria-label="Scarica originale"
+            title="Scarica originale"
+          >
             <Download size={17} />
-          </button>
-          <button aria-label="Altre azioni">
-            <MoreHorizontal size={18} />
-          </button>
+          </a>
+          {item.type === "video" ? (
+            <button type="button" onClick={onEdit} aria-label="Apri editor" title="Apri editor">
+              <Scissors size={17} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -664,6 +951,36 @@ function Inspector({
       </div>
 
       <div className="inspector-body">
+        {item.status !== "ready" ? (
+          <section className={`processing-detail is-${item.status}`}>
+            <div>
+              {item.status === "error" ? (
+                <Info size={17} />
+              ) : (
+                <LoaderCircle size={17} />
+              )}
+              <span>
+                <strong>
+                  {item.status === "error"
+                    ? "Elaborazione non riuscita"
+                    : item.processingStage ?? "Caricamento sul server"}
+                </strong>
+                <small>
+                  {item.processingState === "PENDING"
+                    ? "In attesa del proprio turno"
+                    : item.processingState === "RUNNING"
+                      ? "Operazione in esecuzione"
+                      : "Preparazione del file"}
+                </small>
+              </span>
+              <b>{item.processingProgress ?? 0}%</b>
+            </div>
+            <span>
+              <i style={{ width: `${item.processingProgress ?? 5}%` }} />
+            </span>
+            {item.processingError ? <p>{item.processingError}</p> : null}
+          </section>
+        ) : null}
         {item.type === "video" ? (
           <div className="inspector-video-tools">
             <button className="capture-frame-from-inspector" onClick={() => onCapture(currentPosition)}>
@@ -755,10 +1072,49 @@ function Inspector({
             <section className="detail-section">
               <div className="detail-section-title">
                 <h3>Persone</h3>
-                <button>
+                <button onClick={() => setPersonOpen((value) => !value)}>
                   <Plus size={14} /> Aggiungi
                 </button>
               </div>
+              {personOpen ? (
+                <div className="person-picker">
+                  <div>
+                    {availablePeople
+                      .filter((name) => !item.people.includes(name))
+                      .slice(0, 12)
+                      .map((name) => (
+                        <button
+                          type="button"
+                          key={name}
+                          onClick={() => {
+                            onAddPerson(name);
+                            setPersonOpen(false);
+                          }}
+                        >
+                          <UserRound size={13} />
+                          {name}
+                        </button>
+                      ))}
+                  </div>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!personInput.trim()) return;
+                      onAddPerson(personInput.trim());
+                      setPersonInput("");
+                      setPersonOpen(false);
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={personInput}
+                      onChange={(event) => setPersonInput(event.target.value)}
+                      placeholder="Nome nuova persona"
+                    />
+                    <button type="submit">Crea e assegna</button>
+                  </form>
+                </div>
+              ) : null}
               {item.people.length ? (
                 <div className="person-list">
                   {item.people.map((name) => (
@@ -768,12 +1124,20 @@ function Inspector({
                           <strong>{name}</strong>
                           <small>Rilevamento confermato</small>
                         </p>
-                        <CheckCircle2 size={16} />
+                        <button
+                          onClick={() => onRemovePerson(name)}
+                          aria-label={`Rimuovi ${name}`}
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
                   ))}
                 </div>
               ) : (
-                <button className="empty-organize">
+                <button
+                  className="empty-organize"
+                  onClick={() => setPersonOpen(true)}
+                >
                   <UserRound size={18} />
                   Assegna una persona
                 </button>
@@ -787,7 +1151,7 @@ function Inspector({
                 {item.tags.map((tag) => (
                   <span key={tag}>
                     {tag}
-                    <button onClick={() => undefined} aria-label={`Rimuovi ${tag}`}>
+                    <button onClick={() => onRemoveTag(tag)} aria-label={`Rimuovi ${tag}`}>
                       <X size={12} />
                     </button>
                   </span>
@@ -836,7 +1200,12 @@ function Inspector({
               </span>
               <p>
                 <strong>{item.status === "ready" ? "Media disponibile" : "Elaborazione in corso"}</strong>
-                <small>{item.sourceFileName ?? item.title}</small>
+                <small>
+                  {item.processingStage ?? item.sourceFileName ?? item.title}
+                  {typeof item.processingProgress === "number"
+                    ? ` · ${item.processingProgress}%`
+                    : ""}
+                </small>
                 <time>{item.date}</time>
               </p>
             </div>
@@ -857,11 +1226,83 @@ function UploadModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [durations, setDurations] = useState<Array<number | null>>([]);
+  const [duplicateChecks, setDuplicateChecks] = useState<Array<{
+    duplicate: boolean;
+    confidence?: "EXACT" | "PROBABLE";
+    reason?: string;
+    match?: {
+      title: string;
+      durationMs: number | null;
+      importedAt: string;
+    } | null;
+  }>>([]);
+  const [forcedDuplicates, setForcedDuplicates] = useState<Set<number>>(new Set());
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
     setFiles((current) => [...current, ...Array.from(list)]);
   };
+
+  useEffect(() => {
+    if (!files.length) {
+      setDurations([]);
+      setDuplicateChecks([]);
+      setForcedDuplicates(new Set());
+      setCheckError(null);
+      return;
+    }
+    let active = true;
+    setChecking(true);
+    setCheckError(null);
+    setForcedDuplicates(new Set());
+    void Promise.all(files.map(readVideoDuration))
+      .then(async (measuredDurations) => {
+        if (!active) return;
+        setDurations(measuredDurations);
+        const response = await fetch("/api/media/import-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            files: files.map((file, index) => ({
+              name: file.name,
+              bytes: file.size,
+              durationMs: measuredDurations[index]
+            }))
+          })
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          results?: typeof duplicateChecks;
+          error?: string;
+        } | null;
+        if (!response.ok || !Array.isArray(payload?.results)) {
+          throw new Error(payload?.error ?? "Controllo duplicati non riuscito");
+        }
+        if (active) setDuplicateChecks(payload.results);
+      })
+      .catch((error) => {
+        if (active) {
+          setCheckError(
+            error instanceof Error
+              ? error.message
+              : "Controllo duplicati non riuscito"
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [files]);
+
+  const filesToImport = files.filter(
+    (_, index) => !duplicateChecks[index]?.duplicate || forcedDuplicates.has(index)
+  );
+  const duplicateCount = duplicateChecks.filter(({ duplicate }) => duplicate).length;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -917,20 +1358,56 @@ function UploadModal({
         {files.length ? (
           <div className="upload-files">
             <div className="upload-files-head">
-              <strong>{files.length} file pronti</strong>
+              <strong>
+                {checking
+                  ? `Verifica di ${files.length} file…`
+                  : `${filesToImport.length} pronti · ${duplicateCount} già presenti`}
+              </strong>
               <button onClick={() => setFiles([])}>Rimuovi tutti</button>
             </div>
-            {files.slice(0, 3).map((file, index) => (
-              <div className="upload-file-row" key={`${file.name}-${index}`}>
+            {files.slice(0, 8).map((file, index) => {
+              const check = duplicateChecks[index];
+              const forced = forcedDuplicates.has(index);
+              return (
+              <div
+                className={check?.duplicate && !forced ? "upload-file-row is-duplicate" : "upload-file-row"}
+                key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+              >
                 <span>{file.type.startsWith("video") ? <Film size={17} /> : <ImageIcon size={17} />}</span>
                 <p>
                   <strong>{file.name}</strong>
-                  <small>{formatBytes(file.size)}</small>
+                  <small>
+                    {formatBytes(file.size)}
+                    {durations[index] ? ` · ${formatDuration(durations[index])}` : ""}
+                    {check?.duplicate
+                      ? ` · ${check.confidence === "EXACT" ? "già importato" : "possibile duplicato"}`
+                      : ""}
+                  </small>
+                  {check?.duplicate ? <em>{check.reason}</em> : null}
                 </p>
-                <CheckCircle2 size={17} />
+                {checking ? (
+                  <LoaderCircle className="is-spinning" size={17} />
+                ) : check?.duplicate ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForcedDuplicates((current) => {
+                        const next = new Set(current);
+                        if (next.has(index)) next.delete(index);
+                        else next.add(index);
+                        return next;
+                      })
+                    }
+                  >
+                    {forced ? "Escludi" : "Importa comunque"}
+                  </button>
+                ) : (
+                  <CheckCircle2 size={17} />
+                )}
               </div>
-            ))}
-            {files.length > 3 ? <small className="more-files">e altri {files.length - 3} file</small> : null}
+            )})}
+            {files.length > 8 ? <small className="more-files">e altri {files.length - 8} file</small> : null}
+            {checkError ? <p className="upload-check-error">{checkError}</p> : null}
           </div>
         ) : null}
 
@@ -960,13 +1437,13 @@ function UploadModal({
             <button onClick={onClose}>Annulla</button>
             <button
               className="confirm-upload"
-              disabled={!files.length}
+              disabled={!filesToImport.length || checking}
               onClick={() => {
-                onUpload(files);
+                onUpload(filesToImport);
                 onClose();
               }}
             >
-              Importa {files.length || ""}
+              {checking ? "Verifica…" : `Importa ${filesToImport.length || ""}`}
               <ArrowRightIcon />
             </button>
           </div>
@@ -1153,8 +1630,17 @@ export function MediaWorkspace() {
   const [sort, setSort] = useState<"recent" | "name">("recent");
   const [view, setView] = useState<"grid" | "compact">("grid");
   const [items, setItems] = useState<MediaItem[]>([]);
-  const [taxonomyPeople, setTaxonomyPeople] = useState<string[]>([]);
-  const [taxonomyTags, setTaxonomyTags] = useState<Array<{ name: string; color: string }>>([]);
+  const [libraryTotal, setLibraryTotal] = useState(0);
+  const [libraryCounts, setLibraryCounts] = useState({
+    all: 0,
+    image: 0,
+    video: 0
+  });
+  const [mediaRefreshNonce, setMediaRefreshNonce] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [externalScan, setExternalScan] = useState<ExternalScanState | null>(null);
+  const [taxonomyPeople, setTaxonomyPeople] = useState<TaxonomyEntry[]>([]);
+  const [taxonomyTags, setTaxonomyTags] = useState<TaxonomyEntry[]>([]);
   const [taxonomyGroups, setTaxonomyGroups] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspected, setInspected] = useState<MediaItem | null>(null);
@@ -1174,6 +1660,43 @@ export function MediaWorkspace() {
     item: MediaItem;
     initialTimeMs: number;
   } | null>(null);
+  const scanCompletionRef = useRef<string | null>(null);
+
+  const mediaQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("kind", filter);
+    if (sort === "name") params.set("sort", "name");
+    if (activeNav === "Preferiti" || advancedFilters.favoriteOnly) {
+      params.set("favorite", "true");
+    }
+    if (activeNav === "Da catalogare") params.set("uncatalogued", "true");
+    if (advancedFilters.people.length) {
+      params.set("people", advancedFilters.people.join(","));
+    }
+    if (advancedFilters.tags.length) {
+      params.set("tags", advancedFilters.tags.join(","));
+    }
+    if (advancedFilters.groups.length) {
+      params.set("groups", advancedFilters.groups.join(","));
+    }
+    if (advancedFilters.duration === "short") params.set("durationMax", "60");
+    if (advancedFilters.duration === "medium") {
+      params.set("durationMin", "60");
+      params.set("durationMax", "300");
+    }
+    if (advancedFilters.duration === "long") params.set("durationMin", "300");
+    if (advancedFilters.resolution !== "any") {
+      params.set("resolution", advancedFilters.resolution);
+    }
+    if (advancedFilters.status !== "any") {
+      params.set("status", advancedFilters.status.toUpperCase());
+    }
+    if (advancedFilters.markerOnly) params.set("markerOnly", "true");
+    if (advancedFilters.duplicateOnly) params.set("duplicateOnly", "true");
+    if (advancedFilters.dateFrom) params.set("dateFrom", advancedFilters.dateFrom);
+    if (advancedFilters.dateTo) params.set("dateTo", advancedFilters.dateTo);
+    return params.toString();
+  }, [activeNav, advancedFilters, filter, sort]);
 
   const visibleItems = useMemo(() => {
     let result = filter === "all" ? [...items] : items.filter((item) => item.type === filter);
@@ -1237,10 +1760,15 @@ export function MediaWorkspace() {
     [items, selectedIds]
   );
   const advancedFilterCount = countAdvancedFilters(advancedFilters);
-  const imageCount = items.filter((item) => item.type === "image").length;
-  const videoCount = items.filter((item) => item.type === "video").length;
+  const imageCount = libraryCounts.image;
+  const videoCount = libraryCounts.video;
   const uncataloguedCount = items.filter((item) => !item.tags.length || item.status === "processing").length;
   const duplicateCount = items.reduce((total, item) => total + (item.duplicateCount ?? 0), 0);
+  const processingKey = items
+    .filter((item) => item.status === "processing" && !item.id.startsWith("local-"))
+    .map((item) => item.id)
+    .sort()
+    .join("|");
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -1266,27 +1794,70 @@ export function MediaWorkspace() {
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/media?take=80")
+    const params = new URLSearchParams(mediaQuery);
+    params.set("take", "200");
+    void fetch(`/api/media?${params.toString()}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { items?: PersistedMediaRecord[]; mode?: string } | null) => {
+      .then((payload: {
+        items?: PersistedMediaRecord[];
+        mode?: string;
+        total?: number;
+        counts?: { all: number; image: number; video: number };
+      } | null) => {
         if (!active || !Array.isArray(payload?.items)) return;
-        setItems(payload.mode === "demo"
-          ? demoMedia
-          : payload.items.map((item) => persistedToMedia(item)));
+        setItems(
+          payload.mode === "demo"
+            ? demoMedia
+            : payload.items.map((item) => persistedToMedia(item))
+        );
+        setLibraryTotal(
+          payload.mode === "demo"
+            ? demoMedia.length
+            : payload.total ?? payload.items.length
+        );
+        if (payload.counts) setLibraryCounts(payload.counts);
+        else if (payload.mode === "demo") {
+          setLibraryCounts({
+            all: demoMedia.length,
+            image: demoMedia.filter(({ type }) => type === "image").length,
+            video: demoMedia.filter(({ type }) => type === "video").length
+          });
+        }
       })
       .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [mediaQuery, mediaRefreshNonce]);
+
+  useEffect(() => {
+    let active = true;
     void fetch("/api/taxonomy")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: {
-        people?: Array<string | { name: string }>;
-        tags?: Array<string | { name: string; color?: string | null }>;
+        people?: Array<string | { id: string; name: string; count?: number }>;
+        tags?: Array<string | {
+          id: string;
+          name: string;
+          color?: string | null;
+          count?: number;
+        }>;
         groups?: Array<string | { name: string }>;
       } | null) => {
         if (!active || !payload) return;
-        setTaxonomyPeople((payload.people ?? []).map((entry) => typeof entry === "string" ? entry : entry.name));
+        setTaxonomyPeople((payload.people ?? []).map((entry) =>
+          typeof entry === "string"
+            ? { id: `demo-person-${entry}`, name: entry, count: 0 }
+            : { id: entry.id, name: entry.name, count: entry.count ?? 0 }
+        ));
         setTaxonomyTags((payload.tags ?? []).map((entry) => typeof entry === "string"
-          ? { name: entry, color: "#6D5DFB" }
-          : { name: entry.name, color: entry.color ?? "#6D5DFB" }));
+          ? { id: `demo-tag-${entry}`, name: entry, color: "#6D5DFB", count: 0 }
+          : {
+              id: entry.id,
+              name: entry.name,
+              color: entry.color ?? "#6D5DFB",
+              count: entry.count ?? 0
+            }));
         setTaxonomyGroups((payload.groups ?? []).map((entry) => typeof entry === "string" ? entry : entry.name));
       })
       .catch(() => undefined);
@@ -1300,6 +1871,73 @@ export function MediaWorkspace() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const checkScan = () => {
+      void fetch("/api/library/scan")
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload: { scan?: ExternalScanState } | null) => {
+          if (!active || !payload?.scan) return;
+          setExternalScan(payload.scan);
+          if (
+            payload.scan.completedAt &&
+            payload.scan.completedAt !== scanCompletionRef.current
+          ) {
+            scanCompletionRef.current = payload.scan.completedAt;
+            setMediaRefreshNonce((current) => current + 1);
+          }
+        })
+        .catch(() => undefined);
+    };
+    checkScan();
+    const interval = window.setInterval(checkScan, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    const processingIds = items
+      .filter((item) => item.status === "processing" && !item.id.startsWith("local-"))
+      .map((item) => item.id);
+    if (!processingIds.length) return;
+
+    const refresh = () => {
+      void Promise.all(
+        processingIds.map(async (id) => {
+          const response = await fetch(`/api/media/${id}`);
+          if (!response.ok) return null;
+          const payload = (await response.json()) as { item?: PersistedMediaRecord };
+          return payload.item ?? null;
+        })
+      )
+        .then((records) => {
+          const freshById = new Map(
+            records
+              .filter((record): record is PersistedMediaRecord => Boolean(record))
+              .map((record) => [record.id, record])
+          );
+          setItems((current) =>
+            current.map((item) => {
+              const record = freshById.get(item.id);
+              return record ? persistedToMedia(record, item.src) : item;
+            })
+          );
+          setInspected((current) => {
+            if (!current) return current;
+            const record = freshById.get(current.id);
+            return record ? persistedToMedia(record, current.src) : current;
+          });
+        })
+        .catch(() => undefined);
+    };
+
+    refresh();
+    const interval = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(interval);
+  }, [processingKey]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1327,16 +1965,137 @@ export function MediaWorkspace() {
     });
   };
 
+  const replacePersistedItem = (record: PersistedMediaRecord) => {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === record.id ? persistedToMedia(record, item.src) : item
+      )
+    );
+    setInspected((current) =>
+      current?.id === record.id
+        ? persistedToMedia(record, current.src)
+        : current
+    );
+  };
+
+  const patchMediaTaxonomy = async (
+    item: MediaItem,
+    body: { tagNames?: string[]; personNames?: string[] }
+  ) => {
+    const response = await fetch(`/api/media/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      item?: PersistedMediaRecord;
+      error?: string;
+    } | null;
+    if (!response.ok || !payload?.item) {
+      throw new Error(payload?.error ?? "Salvataggio non riuscito");
+    }
+    replacePersistedItem(payload.item);
+    return payload.item;
+  };
+
+  const reloadTaxonomy = () => {
+    void fetch("/api/taxonomy")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: {
+        people?: Array<{ id: string; name: string; count?: number }>;
+        tags?: Array<{
+          id: string;
+          name: string;
+          color?: string | null;
+          count?: number;
+        }>;
+      } | null) => {
+        if (!payload) return;
+        setTaxonomyPeople((payload.people ?? []).map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          count: entry.count ?? 0
+        })));
+        setTaxonomyTags((payload.tags ?? []).map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          color: entry.color ?? "#6D5DFB",
+          count: entry.count ?? 0
+        })));
+      })
+      .catch(() => undefined);
+  };
+
   const addTag = (item: MediaItem, tag: string, event?: MouseEvent) => {
     event?.stopPropagation();
+    const previousTags = item.tags;
+    const nextTags = previousTags.includes(tag)
+      ? previousTags
+      : [...previousTags, tag];
     updateItem(item.id, (current) => ({
       ...current,
-      tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag]
+      tags: nextTags
     }));
-    setToast(`“${tag}” aggiunto a ${item.title}`);
+    void patchMediaTaxonomy(item, { tagNames: nextTags })
+      .then(() => {
+        setToast(`“${tag}” aggiunto a ${item.title}`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, tags: previousTags }));
+        setToast(error instanceof Error ? error.message : "Tag non salvato");
+      });
+  };
+
+  const removeTag = (item: MediaItem, tag: string) => {
+    const previousTags = item.tags;
+    const nextTags = previousTags.filter((entry) => entry !== tag);
+    updateItem(item.id, (current) => ({ ...current, tags: nextTags }));
+    void patchMediaTaxonomy(item, { tagNames: nextTags })
+      .then(() => {
+        setToast(`“${tag}” rimosso da ${item.title}`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, tags: previousTags }));
+        setToast(error instanceof Error ? error.message : "Tag non rimosso");
+      });
+  };
+
+  const addPerson = (item: MediaItem, name: string) => {
+    const previousPeople = item.people;
+    const nextPeople = previousPeople.includes(name)
+      ? previousPeople
+      : [...previousPeople, name];
+    updateItem(item.id, (current) => ({ ...current, people: nextPeople }));
+    void patchMediaTaxonomy(item, { personNames: nextPeople })
+      .then(() => {
+        setToast(`${name} assegnato a ${item.title}`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, people: previousPeople }));
+        setToast(error instanceof Error ? error.message : "Persona non assegnata");
+      });
+  };
+
+  const removePerson = (item: MediaItem, name: string) => {
+    const previousPeople = item.people;
+    const nextPeople = previousPeople.filter((entry) => entry !== name);
+    updateItem(item.id, (current) => ({ ...current, people: nextPeople }));
+    void patchMediaTaxonomy(item, { personNames: nextPeople })
+      .then(() => {
+        setToast(`${name} rimosso da ${item.title}`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, people: previousPeople }));
+        setToast(error instanceof Error ? error.message : "Persona non rimossa");
+      });
   };
 
   const addTagToSelection = (tag: string) => {
+    const targets = selectedItems;
     setItems((current) =>
       current.map((item) =>
         selectedIds.has(item.id) && !item.tags.includes(tag)
@@ -1344,7 +2103,20 @@ export function MediaWorkspace() {
           : item
       )
     );
-    setToast(`“${tag}” aggiunto a ${selectedIds.size} media`);
+    void Promise.all(
+      targets.map((item) =>
+        patchMediaTaxonomy(item, {
+          tagNames: item.tags.includes(tag) ? item.tags : [...item.tags, tag]
+        })
+      )
+    )
+      .then(() => {
+        setToast(`“${tag}” aggiunto a ${targets.length} media`);
+        reloadTaxonomy();
+      })
+      .catch((error) => {
+        setToast(error instanceof Error ? error.message : "Tag non salvato");
+      });
   };
 
   const addMarker = (item: MediaItem, marker: HighlightMarker) => {
@@ -1398,60 +2170,147 @@ export function MediaWorkspace() {
   };
 
   const handleUpload = (files: File[]) => {
-    const created = files.map((file, index): MediaItem => ({
-      id: `local-${Date.now()}-${index}`,
-      title: file.name.replace(/\.[^/.]+$/, ""),
-      type: file.type.startsWith("video") ? "video" : "image",
-      src: URL.createObjectURL(file),
-      accent: "#817A70",
-      duration: file.type.startsWith("video") ? "—" : undefined,
-      dimensions: "Analisi in corso",
-      size: formatBytes(file.size),
-      date: "adesso",
-      people: [],
-      tags: [],
-      group: "Da catalogare",
-      status: "processing",
-      aspect: "landscape"
-    }));
+    const created = files.map((file, index): MediaItem => {
+      const localUrl = URL.createObjectURL(file);
+      const isVideo = file.type.startsWith("video");
+      return {
+        id: `local-${Date.now()}-${index}`,
+        title: file.name.replace(/\.[^/.]+$/, ""),
+        type: isVideo ? "video" : "image",
+        src: localUrl,
+        originalUrl: isVideo ? localUrl : undefined,
+        accent: "#817A70",
+        duration: isVideo ? "—" : undefined,
+        dimensions: "Analisi in corso",
+        size: formatBytes(file.size),
+        date: "adesso",
+        people: [],
+        tags: [],
+        group: "Da catalogare",
+        status: "processing",
+        processingStage: "Caricamento sul server",
+        processingProgress: 0,
+        processingState: "RUNNING",
+        aspect: "landscape"
+      };
+    });
     setItems((current) => [...created, ...current]);
     setToast(`${files.length} ${files.length === 1 ? "file importato" : "file importati"} · elaborazione avviata`);
 
-    files.forEach((file, index) => {
-      const localItem = created[index];
-      const body = new FormData();
-      body.append("file", file);
-      void fetch("/api/media", { method: "POST", body })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((payload: { item?: PersistedMediaRecord } | null) => {
-          if (!payload?.item || payload.item.id === localItem.id || !payload.item.createdAt) return;
+    let nextUpload = 0;
+    const uploadNext = async () => {
+      while (nextUpload < files.length) {
+        const index = nextUpload;
+        nextUpload += 1;
+        const file = files[index];
+        const localItem = created[index];
+        try {
+          const payload = await uploadMedia(file, (progress) => {
+            updateItem(localItem.id, (current) => ({
+              ...current,
+              processingProgress: progress,
+              processingStage:
+                progress === 100
+                  ? "In attesa dell’elaborazione"
+                  : "Caricamento sul server"
+            }));
+          });
+          if (!payload.item || payload.item.id === localItem.id || !payload.item.createdAt) {
+            continue;
+          }
           const serverItem = persistedToMedia(payload.item, localItem.src);
           setItems((current) =>
             current.map((item) => (item.id === localItem.id ? serverItem : item))
           );
+          setInspected((current) =>
+            current?.id === localItem.id ? serverItem : current
+          );
+        } catch (error) {
+          setItems((current) => current.filter((item) => item.id !== localItem.id));
+          setInspected((current) => (current?.id === localItem.id ? null : current));
+          URL.revokeObjectURL(localItem.src);
+          setToast(error instanceof Error ? error.message : "Importazione non riuscita");
+        }
+      }
+    };
 
-          const poll = (attempt: number) => {
-            if (attempt > 12) return;
-            window.setTimeout(() => {
-              void fetch(`/api/media/${payload.item?.id}`)
-                .then((response) => (response.ok ? response.json() : null))
-                .then((fresh: { item?: PersistedMediaRecord } | null) => {
-                  if (!fresh?.item) return;
-                  const updated = persistedToMedia(fresh.item, localItem.src);
-                  setItems((current) =>
-                    current.map((item) => (item.id === updated.id ? updated : item))
-                  );
-                  if (fresh.item.status === "PROCESSING" || fresh.item.status === "UPLOADING") {
-                    poll(attempt + 1);
-                  }
-                })
-                .catch(() => undefined);
-            }, 1500);
-          };
-          poll(0);
-        })
-        .catch(() => undefined);
-    });
+    void Promise.all(
+      Array.from({ length: Math.min(2, files.length) }, () => uploadNext())
+    );
+  };
+
+  const startExternalScan = () => {
+    void fetch("/api/library/scan", { method: "POST" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { scan?: ExternalScanState } | null) => {
+        if (payload?.scan) setExternalScan(payload.scan);
+      })
+      .catch(() => undefined);
+  };
+
+  const createTaxonomyEntry = (kind: "PERSON" | "TAG", name: string) => {
+    void fetch("/api/taxonomy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, name })
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as {
+          entry?: TaxonomyEntry;
+          error?: string;
+        } | null;
+        if (!response.ok || !payload?.entry) {
+          throw new Error(payload?.error ?? "Creazione non riuscita");
+        }
+        const entry = {
+          ...payload.entry,
+          color: payload.entry.color ?? (kind === "TAG" ? "#8B5CF6" : undefined)
+        };
+        if (kind === "PERSON") {
+          setTaxonomyPeople((current) => [
+            ...current.filter(({ id }) => id !== entry.id),
+            entry
+          ].sort((left, right) => left.name.localeCompare(right.name)));
+        } else {
+          setTaxonomyTags((current) => [
+            ...current.filter(({ id }) => id !== entry.id),
+            entry
+          ].sort((left, right) => left.name.localeCompare(right.name)));
+        }
+        setToast(`${kind === "PERSON" ? "Persona" : "Tag"} “${name}” creato`);
+      })
+      .catch((error) => {
+        setToast(error instanceof Error ? error.message : "Creazione non riuscita");
+      });
+  };
+
+  const loadMoreMedia = () => {
+    if (loadingMore || items.length >= libraryTotal) return;
+    setLoadingMore(true);
+    const params = new URLSearchParams(mediaQuery);
+    params.set("take", "200");
+    params.set("skip", String(items.length));
+    void fetch(`/api/media?${params.toString()}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: {
+        items?: PersistedMediaRecord[];
+        total?: number;
+        counts?: { all: number; image: number; video: number };
+      } | null) => {
+        if (!Array.isArray(payload?.items)) return;
+        const nextItems = payload.items.map((item) => persistedToMedia(item));
+        setItems((current) => {
+          const existing = new Set(current.map(({ id }) => id));
+          return [
+            ...current,
+            ...nextItems.filter(({ id }) => !existing.has(id))
+          ];
+        });
+        setLibraryTotal(payload.total ?? libraryTotal);
+        if (payload.counts) setLibraryCounts(payload.counts);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoadingMore(false));
   };
 
   const navigate = (value: string) => {
@@ -1468,7 +2327,7 @@ export function MediaWorkspace() {
       <div className={mobileSidebar ? "sidebar-drawer is-open" : "sidebar-drawer"}>
         <Sidebar
           active={activeNav}
-          people={taxonomyPeople}
+          people={taxonomyPeople.map(({ name }) => name)}
           uncataloguedCount={uncataloguedCount}
           duplicateCount={duplicateCount}
           onNavigate={navigate}
@@ -1485,7 +2344,16 @@ export function MediaWorkspace() {
 
       <main className="main-content">
         {activeNav === "Utenti & accessi" ? (
-          <UserManagement />
+          <UserManagement
+            onReady={() => {
+              setActiveNav("Libreria");
+              setMediaRefreshNonce((current) => current + 1);
+            }}
+          />
+        ) : activeNav === "Gestione libreria" ? (
+          <LibraryManagement
+            onChanged={() => setMediaRefreshNonce((current) => current + 1)}
+          />
         ) : activeNav === "Duplicati" ? (
           <DuplicatesPanel />
         ) : (
@@ -1497,12 +2365,14 @@ export function MediaWorkspace() {
               La tua libreria, <em>viva.</em>
             </h1>
             <p className="page-subtitle">
-              {items.length ? `${items.length} media nel tuo archivio.` : "Il tuo archivio è pronto per il primo contenuto."}
+              {libraryCounts.all
+                ? `${libraryCounts.all.toLocaleString("it-IT")} media nel tuo archivio.`
+                : "Il tuo archivio è pronto per il primo contenuto."}
             </p>
           </div>
           <div className="library-metrics">
             <div>
-              <strong>{items.length.toLocaleString("it-IT")}</strong>
+              <strong>{libraryCounts.all.toLocaleString("it-IT")}</strong>
               <span>Media</span>
             </div>
             <i />
@@ -1518,12 +2388,13 @@ export function MediaWorkspace() {
           </div>
         </section>
 
+        <ExternalLibraryRail scan={externalScan} onScan={startExternalScan} />
         <StatusRail items={items} />
 
         <section className="library-toolbar">
           <div className="filter-tabs">
             {[
-              { value: "all", label: "Tutti", count: items.length },
+              { value: "all", label: "Tutti", count: libraryCounts.all },
               { value: "image", label: "Foto", count: imageCount },
               { value: "video", label: "Video", count: videoCount }
             ].map((entry) => (
@@ -1627,48 +2498,82 @@ export function MediaWorkspace() {
           </div>
         ) : null}
 
-        {quickMode ? (
-          <div className="quick-mode-banner">
-            <span><Zap size={17} fill="currentColor" /></span>
-            <p>
-              <strong>Catalogazione rapida attiva</strong>
-              Passa sui media e usa <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> per assegnare tag senza interrompere il flusso.
-            </p>
-            <button onClick={() => setQuickMode(false)}>Fine</button>
-          </div>
-        ) : null}
+        {activeNav === "Persone" ? (
+          <TaxonomyManager
+            kind="people"
+            entries={taxonomyPeople}
+            onCreate={(name) => createTaxonomyEntry("PERSON", name)}
+            onOpen={(name) => {
+              setAdvancedFilters((current) => ({ ...current, people: [name] }));
+              setActiveNav("Libreria");
+            }}
+          />
+        ) : activeNav === "Tag" ? (
+          <TaxonomyManager
+            kind="tags"
+            entries={taxonomyTags}
+            onCreate={(name) => createTaxonomyEntry("TAG", name)}
+            onOpen={(name) => {
+              setAdvancedFilters((current) => ({ ...current, tags: [name] }));
+              setActiveNav("Libreria");
+            }}
+          />
+        ) : (
+          <>
+            {quickMode ? (
+              <div className="quick-mode-banner">
+                <span><Zap size={17} fill="currentColor" /></span>
+                <p>
+                  <strong>Catalogazione rapida attiva</strong>
+                  Passa sui media e usa <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> per assegnare tag senza interrompere il flusso.
+                </p>
+                <button onClick={() => setQuickMode(false)}>Fine</button>
+              </div>
+            ) : null}
 
-        <section className={view === "compact" ? "media-grid is-compact" : "media-grid"}>
-          {visibleItems.map((item) => (
-            <MediaCard
-              item={item}
-              selected={selectedIds.has(item.id)}
-              quickMode={quickMode}
-              quickTags={taxonomyTags}
-              onOpen={setInspected}
-              onSelect={toggleSelect}
-              onFavorite={toggleFavorite}
-              onQuickTag={addTag}
-              key={item.id}
-            />
-          ))}
-        </section>
+            <section className={view === "compact" ? "media-grid is-compact" : "media-grid"}>
+              {visibleItems.map((item) => (
+                <MediaCard
+                  item={item}
+                  selected={selectedIds.has(item.id)}
+                  quickMode={quickMode}
+                  quickTags={taxonomyTags.map(({ name, color }) => ({
+                    name,
+                    color: color ?? "#6D5DFB"
+                  }))}
+                  onOpen={setInspected}
+                  onSelect={toggleSelect}
+                  onFavorite={toggleFavorite}
+                  onQuickTag={addTag}
+                  key={item.id}
+                />
+              ))}
+            </section>
 
-        {!visibleItems.length ? (
-          <section className="empty-state">
-            <Archive size={28} />
-            <h2>Nessun media qui, per ora.</h2>
-            <p>Prova un altro filtro oppure importa qualcosa di nuovo.</p>
-            <button onClick={() => setUploadOpen(true)}>
-              <Plus size={17} />
-              Importa media
-            </button>
-          </section>
-        ) : null}
+            {!visibleItems.length ? (
+              <section className="empty-state">
+                <Archive size={28} />
+                <h2>Nessun media qui, per ora.</h2>
+                <p>Prova un altro filtro oppure importa qualcosa di nuovo.</p>
+                <button onClick={() => setUploadOpen(true)}>
+                  <Plus size={17} />
+                  Importa media
+                </button>
+              </section>
+            ) : null}
 
-        <footer className="content-footer">
-          <span>Mostrati {visibleItems.length} di {items.length} media</span>
-        </footer>
+            <footer className="content-footer">
+              <span>
+                Mostrati {visibleItems.length} di {libraryTotal.toLocaleString("it-IT")} media
+              </span>
+              {items.length < libraryTotal ? (
+                <button onClick={loadMoreMedia} disabled={loadingMore}>
+                  {loadingMore ? "Caricamento…" : "Carica altri 200"}
+                </button>
+              ) : null}
+            </footer>
+          </>
+        )}
           </>
         )}
       </main>
@@ -1676,9 +2581,13 @@ export function MediaWorkspace() {
       {inspected ? (
         <Inspector
           item={inspected}
+          availablePeople={taxonomyPeople.map(({ name }) => name)}
           onClose={() => setInspected(null)}
           onFavorite={() => toggleFavorite(inspected)}
           onAddTag={(tag) => addTag(inspected, tag)}
+          onRemoveTag={(tag) => removeTag(inspected, tag)}
+          onAddPerson={(name) => addPerson(inspected, name)}
+          onRemovePerson={(name) => removePerson(inspected, name)}
           onAddMarker={(marker) => addMarker(inspected, marker)}
           onEdit={() => setEditorOpen(true)}
           onRename={(name) => renameFile(inspected, name)}
@@ -1710,7 +2619,7 @@ export function MediaWorkspace() {
       {filtersOpen ? (
         <AdvancedFilters
           value={advancedFilters}
-          people={taxonomyPeople}
+          people={taxonomyPeople.map(({ name }) => name)}
           tags={taxonomyTags.map(({ name }) => name)}
           groups={taxonomyGroups}
           resultCount={visibleItems.length}
@@ -1745,7 +2654,7 @@ export function MediaWorkspace() {
       {organizerOpen ? (
         <OrganizeFilesModal
           items={selectedItems.length ? selectedItems : inspected ? [inspected] : []}
-          people={taxonomyPeople}
+          people={taxonomyPeople.map(({ name }) => name)}
           onClose={() => setOrganizerOpen(false)}
           onComplete={setToast}
         />

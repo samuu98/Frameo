@@ -8,7 +8,6 @@ import {
   Film,
   GitMerge,
   GripVertical,
-  Play,
   Plus,
   Scissors,
   Split,
@@ -54,6 +53,7 @@ export function VideoEditorModal({
   );
   const [name, setName] = useState(videos[0] ? `${videos[0].title} — edit` : "Nuovo montaggio");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const updateClip = (id: string, patch: Partial<Clip>) =>
     setClips((current) => current.map((clip) => clip.localId === id ? { ...clip, ...patch } : clip));
@@ -69,8 +69,9 @@ export function VideoEditorModal({
   };
 
   const createProject = () => {
-    if (!clips.length) return;
+    if (!clips.length || !name.trim()) return;
     setSubmitting(true);
+    setError(null);
     void fetch("/api/editor", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -85,11 +86,23 @@ export function VideoEditorModal({
         }))
       })
     })
-      .then(() => {
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as {
+          error?: string;
+        } | null;
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "Impossibile avviare il montaggio");
+        }
         onCreated(`Montaggio “${name}” avviato in background`);
         onClose();
       })
-      .catch(() => onCreated("Progetto salvato; verrà elaborato quando il worker sarà disponibile"))
+      .catch((cause) =>
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Impossibile avviare il montaggio"
+        )
+      )
       .finally(() => setSubmitting(false));
   };
 
@@ -120,8 +133,25 @@ export function VideoEditorModal({
         </div>
         <div className="editor-body">
           <div className="editor-preview" style={{ backgroundColor: clips[0]?.media.accent ?? "#282824" }}>
-            {clips[0] ? <img src={clips[0].media.src} alt="" /> : <Film size={34} />}
-            <button><Play size={19} fill="currentColor" /></button>
+            {clips[0] ? (
+              <video
+                key={clips[0].localId}
+                src={clips[0].media.originalUrl ?? clips[0].media.previewUrl ?? clips[0].media.src}
+                poster={clips[0].media.thumbnailUrl ?? clips[0].media.src}
+                controls
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(event) => {
+                  if (clips[0].media.durationMs) return;
+                  const durationMs = Math.round(event.currentTarget.duration * 1000);
+                  if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+                  updateClip(clips[0].localId, {
+                    media: { ...clips[0].media, durationMs, duration: formatTime(durationMs) },
+                    endMs: durationMs
+                  });
+                }}
+              />
+            ) : <Film size={34} />}
             <div><span>{clips[0] ? formatTime(clips[0].startMs) : "00:00"}</span><i /><span>{clips[0] ? formatTime(clips[0].endMs) : "00:00"}</span></div>
           </div>
           <div className="editor-clips">
@@ -170,7 +200,11 @@ export function VideoEditorModal({
         <footer>
           <label><span>NOME FILE RISULTATO</span><div><Film size={15} /><input value={name} onChange={(event) => setName(event.target.value)} /><em>.mp4</em></div></label>
           <div className="editor-output-copy"><strong>{formatTime(clips.reduce((total, clip) => total + clip.endMs - clip.startMs, 0))}</strong><span>durata stimata</span></div>
-          <div className="editor-footer-actions"><button onClick={onClose}>Annulla</button><button disabled={submitting || !clips.length} onClick={createProject}><WandSparkles size={15} /> {submitting ? "Avvio…" : "Crea nuovo video"}</button></div>
+          <div className="editor-footer-actions">
+            {error ? <p role="alert">{error}</p> : null}
+            <button onClick={onClose}>Annulla</button>
+            <button disabled={submitting || !clips.length || !name.trim()} onClick={createProject}><WandSparkles size={15} /> {submitting ? "Avvio…" : "Crea nuovo video"}</button>
+          </div>
         </footer>
       </section>
     </div>

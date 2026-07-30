@@ -19,6 +19,7 @@ const updateSchema = z.object({
   rating: z.number().int().min(0).max(5).optional(),
   capturedAt: z.iso.datetime().nullable().optional(),
   tagNames: z.array(z.string().trim().min(1).max(64)).max(40).optional(),
+  personNames: z.array(z.string().trim().min(1).max(100)).max(100).optional(),
   personIds: z.array(z.string().min(1)).max(100).optional(),
   groupIds: z.array(z.string().min(1)).max(40).optional()
 });
@@ -78,7 +79,7 @@ export async function PATCH(
   });
   if (!accessible) return NextResponse.json({ error: "Media non trovato" }, { status: 404 });
 
-  const { tagNames, personIds, groupIds, capturedAt, ...fields } = parsed.data;
+  const { tagNames, personNames, personIds, groupIds, capturedAt, ...fields } = parsed.data;
   const update: Prisma.MediaAssetUpdateInput = {
     ...fields,
     capturedAt: capturedAt === null ? null : capturedAt ? new Date(capturedAt) : undefined
@@ -97,7 +98,19 @@ export async function PATCH(
       }))
     };
   }
-  if (personIds) {
+  if (personNames) {
+    update.people = {
+      deleteMany: {},
+      create: personNames.map((name) => ({
+        person: {
+          connectOrCreate: {
+            where: { name },
+            create: { name }
+          }
+        }
+      }))
+    };
+  } else if (personIds) {
     update.people = {
       deleteMany: {},
       create: personIds.map((personId) => ({ person: { connect: { id: personId } } }))

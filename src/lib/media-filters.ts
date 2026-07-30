@@ -38,6 +38,7 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   const markerOnly = url.searchParams.get("markerOnly") === "true";
   const duplicateOnly = url.searchParams.get("duplicateOnly") === "true";
   const favorite = url.searchParams.get("favorite");
+  const uncatalogued = url.searchParams.get("uncatalogued") === "true";
 
   const filters: Prisma.MediaAssetWhereInput[] = [buildAccessWhere(user)];
   if (kind === "video") filters.push({ kind: MediaKind.VIDEO });
@@ -45,6 +46,14 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   if (statuses.length) filters.push({ status: { in: statuses } });
   if (favorite === "true") filters.push({ favorite: true });
   if (favorite === "false") filters.push({ favorite: false });
+  if (uncatalogued) {
+    filters.push({
+      OR: [
+        { tags: { none: {} } },
+        { status: { in: [MediaStatus.UPLOADING, MediaStatus.PROCESSING] } }
+      ]
+    });
+  }
 
   if (search) {
     filters.push({

@@ -13,13 +13,19 @@ type MediaWithRelations = Prisma.MediaAssetGetPayload<{
 }>;
 
 export function mediaToJson(media: MediaWithRelations) {
+  const streamUrl = (storagePath: string) =>
+    `/api/stream/${storagePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/")}`;
+
   return {
     ...media,
     bytes: media.bytes.toString(),
-    thumbnailUrl: media.thumbnailPath ? `/api/stream/${media.thumbnailPath}` : null,
-    previewUrl: media.previewPath ? `/api/stream/${media.previewPath}` : null,
-    streamUrl: media.streamPath ? `/api/stream/${media.streamPath}` : null,
-    originalUrl: `/api/stream/${media.originalPath}`,
+    thumbnailUrl: media.thumbnailPath ? streamUrl(media.thumbnailPath) : null,
+    previewUrl: media.previewPath ? streamUrl(media.previewPath) : null,
+    streamUrl: media.streamPath ? streamUrl(media.streamPath) : null,
+    originalUrl: streamUrl(media.originalPath),
     tags: media.tags.map(({ tag }) => tag),
     people: media.people.map(({ person, confidence, region }) => ({
       ...person,

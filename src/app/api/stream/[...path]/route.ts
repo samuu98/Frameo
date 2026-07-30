@@ -15,14 +15,29 @@ const storageRoot = path.resolve(
 );
 
 const mimeTypes: Record<string, string> = {
-  ".webp": "image/webp",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
   ".gif": "image/gif",
-  ".mp4": "video/mp4",
-  ".mov": "video/quicktime",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
+  ".webp": "image/webp",
+  ".3gp": "video/3gpp",
+  ".avi": "video/x-msvideo",
+  ".m4v": "video/x-m4v",
   ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg",
+  ".mts": "video/mp2t",
+  ".m2ts": "video/mp2t",
+  ".webm": "video/webm",
+  ".wmv": "video/x-ms-wmv",
   ".m3u8": "application/vnd.apple.mpegurl",
   ".ts": "video/mp2t"
 };
@@ -32,7 +47,7 @@ export async function GET(
   context: { params: Promise<{ path: string[] }> }
 ) {
   const params = await context.params;
-  const pathSegments = params.path.map(decodeURIComponent);
+  const pathSegments = params.path;
   const relativePath = pathSegments.join("/");
   const requested = pathSegments.join(path.sep);
   const absolutePath = path.resolve(storageRoot, requested);
@@ -80,15 +95,21 @@ export async function GET(
     return NextResponse.json({ error: "File non trovato" }, { status: 404 });
   }
 
-  const contentType = mimeTypes[path.extname(absolutePath).toLowerCase()] ?? "application/octet-stream";
+  const contentType =
+    mimeTypes[path.extname(absolutePath).toLowerCase()] ??
+    "application/octet-stream";
   const range = request.headers.get("range");
 
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!match) return new Response(null, { status: 416 });
     const start = match[1] ? Number(match[1]) : 0;
-    const end = match[2] ? Math.min(Number(match[2]), fileStat.size - 1) : fileStat.size - 1;
-    if (start > end || start >= fileStat.size) return new Response(null, { status: 416 });
+    const end = match[2]
+      ? Math.min(Number(match[2]), fileStat.size - 1)
+      : fileStat.size - 1;
+    if (start > end || start >= fileStat.size) {
+      return new Response(null, { status: 416 });
+    }
 
     const stream = createReadStream(absolutePath, { start, end });
     return new Response(Readable.toWeb(stream) as ReadableStream, {

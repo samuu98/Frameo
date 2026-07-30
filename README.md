@@ -18,6 +18,8 @@ catalogare e riprodurre foto e video dal browser.
 - Frame Lab per scorrere i video a passi di 1 o 10 fotogrammi, leggere timecode e
   FPS reali e salvare screenshot PNG alla risoluzione sorgente
 - anteprima video automatica al passaggio del mouse
+- gestione amministrativa delle cartelle scansionate e della destinazione upload
+- coda manuale per generare o rigenerare miniature e clip di anteprima
 - rilevamento duplicati esatti SHA-256 e somiglianze visuali tramite dHash
 - editor FFmpeg non distruttivo per tagliare, dividere e unire video
 - utenti, ruoli e regole ALLOW/DENY per media, persone, tag e gruppi
@@ -104,6 +106,13 @@ flowchart LR
 
 Gli originali non vengono modificati. Ogni derivato è salvato in
 `storage/derived/<media-id>` e può essere rigenerato senza perdita.
+
+Una libreria host può essere montata in sola lettura con
+`deploy/docker-compose.external.yml`. La pagina **Gestione libreria** permette di
+limitare la scansione a specifiche sottocartelle, vedere i conteggi reali
+dell'indice e avviare in background la generazione delle anteprime mancanti. Gli
+upload restano invece nello storage scrivibile gestito da Frameo, nella cartella
+relativa scelta dall'amministratore.
 
 Gli screenshot estratti dai video diventano normali media della libreria: restano
 collegati al video e al timecode sorgente, ereditano persone, tag e gruppi e

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import Busboy from "busboy";
@@ -11,7 +11,11 @@ import { registerDuplicateMatches } from "@/lib/duplicate-detector";
 import { getRequestUser, requireEditor } from "@/lib/access-control";
 import { buildMediaWhere } from "@/lib/media-filters";
 import { mediaToJson } from "@/lib/media-json";
-import { processMediaAsset } from "@/lib/media-processor";
+import { enqueueMediaProcessing } from "@/lib/media-processor";
+import {
+  getLibrarySettings,
+  resolveStorageFolder
+} from "@/lib/library-settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,16 +42,44 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const take = Math.min(Number(url.searchParams.get("take") ?? 60), 200);
+  const skip = Math.max(0, Number(url.searchParams.get("skip") ?? 0));
   const user = await getRequestUser(request);
+  const where = buildMediaWhere(url, user);
 
-  const items = await prisma.mediaAsset.findMany({
-    where: buildMediaWhere(url, user),
-    include: includeRelations,
-    orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
-    take
+  const accessWhere = buildMediaWhere(
+    new URL(`${url.origin}${url.pathname}`),
+    user
+  );
+  const orderBy =
+    url.searchParams.get("sort") === "name"
+      ? [{ title: "asc" as const }, { createdAt: "desc" as const }]
+      : [{ capturedAt: "desc" as const }, { createdAt: "desc" as const }];
+  const [items, total, imageCount, videoCount] = await prisma.$transaction([
+    prisma.mediaAsset.findMany({
+      where,
+      include: includeRelations,
+      orderBy,
+      take,
+      skip
+    }),
+    prisma.mediaAsset.count({ where }),
+    prisma.mediaAsset.count({
+      where: { AND: [accessWhere, { kind: MediaKind.IMAGE }] }
+    }),
+    prisma.mediaAsset.count({
+      where: { AND: [accessWhere, { kind: MediaKind.VIDEO }] }
+    })
+  ]);
+
+  return NextResponse.json({
+    items: items.map(mediaToJson),
+    total,
+    counts: {
+      all: imageCount + videoCount,
+      image: imageCount,
+      video: videoCount
+    }
   });
-
-  return NextResponse.json({ items: items.map(mediaToJson) });
 }
 
 interface UploadResult {
@@ -64,12 +96,16 @@ async function streamUpload(request: Request): Promise<UploadResult> {
   if (!request.body) throw new Error("Upload body is empty");
 
   const id = randomUUID();
-  const uploadDir = path.join(storageRoot, "originals", id);
+  const settings = await getLibrarySettings();
+  const uploadRoot = resolveStorageFolder(settings.uploadFolder);
+  const uploadDir = path.join(uploadRoot, id);
   await mkdir(uploadDir, { recursive: true });
   const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES ?? 5 * 1024 ** 3);
 
   return new Promise((resolve, reject) => {
-    let resolved = false;
+    let settled = false;
+    let busboyFinished = false;
+    let outputFinished = false;
     let bytes = 0;
     const hash = createHash("sha256");
     let result: Omit<UploadResult, "bytes" | "contentHash"> | null = null;
@@ -77,6 +113,19 @@ async function streamUpload(request: Request): Promise<UploadResult> {
       headers: Object.fromEntries(request.headers.entries()),
       limits: { files: 1, fileSize: maxUploadBytes }
     });
+
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      const reason = error instanceof Error ? error : new Error(String(error));
+      void rm(uploadDir, { recursive: true, force: true }).finally(() => reject(reason));
+    };
+
+    const finish = () => {
+      if (settled || !busboyFinished || !outputFinished || !result) return;
+      settled = true;
+      resolve({ ...result, bytes, contentHash: hash.digest("hex") });
+    };
 
     busboy.on("file", (_fieldName, file, info) => {
       const safeName = path.basename(info.filename).replace(/[^\w.\-() ]+/g, "_");
@@ -97,27 +146,30 @@ async function streamUpload(request: Request): Promise<UploadResult> {
         hash.update(chunk);
       });
       file.on("limit", () => {
-        reject(new Error(`File exceeds the ${maxUploadBytes} byte limit`));
+        fail(new Error(`File exceeds the ${maxUploadBytes} byte limit`));
       });
-      file.on("error", reject);
-      output.on("error", reject);
+      file.on("error", (error) => fail(error));
+      output.on("error", (error) => fail(error));
+      output.on("finish", () => {
+        outputFinished = true;
+        finish();
+      });
       file.pipe(output);
     });
 
-    busboy.on("filesLimit", () => reject(new Error("Only one file is accepted per request")));
-    busboy.on("error", reject);
+    busboy.on("filesLimit", () => fail(new Error("Only one file is accepted per request")));
+    busboy.on("error", (error) => fail(error));
     busboy.on("finish", () => {
-      if (resolved) return;
-      resolved = true;
+      busboyFinished = true;
       if (!result) {
-        reject(new Error("No file field was found"));
+        fail(new Error("No file field was found"));
         return;
       }
-      resolve({ ...result, bytes, contentHash: hash.digest("hex") });
+      finish();
     });
 
     const body = Readable.fromWeb(request.body as never);
-    body.on("error", reject);
+    body.on("error", (error) => fail(error));
     body.pipe(busboy);
   });
 }
@@ -167,7 +219,7 @@ export async function POST(request: Request) {
         originalPath: uploaded.relativePath,
         sourceFileName: uploaded.fileName,
         contentHash: uploaded.contentHash,
-        directoryKey: "originals"
+        directoryKey: (await getLibrarySettings()).uploadFolder
       },
       include: includeRelations
     });
@@ -175,7 +227,7 @@ export async function POST(request: Request) {
     void registerDuplicateMatches(media.id).catch((error) => {
       console.error(`Exact duplicate scan failed for media ${media.id}`, error);
     });
-    void processMediaAsset(media.id).catch((error) => {
+    void enqueueMediaProcessing(media.id).catch((error) => {
       console.error(`Processing failed for media ${media.id}`, error);
     });
 
