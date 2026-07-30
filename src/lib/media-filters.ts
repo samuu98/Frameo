@@ -75,7 +75,12 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
     filters.push({ groups: { some: { group: { name: { in: groups } } } } });
   }
   if (folders.length) {
-    filters.push({ directoryKey: { in: folders } });
+    filters.push({
+      OR: folders.flatMap((folder) => [
+        { directoryKey: folder },
+        { directoryKey: { startsWith: `${folder}/` } }
+      ])
+    });
   }
   if (durationMin !== null || durationMax !== null) {
     filters.push({
