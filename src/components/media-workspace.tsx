@@ -1146,6 +1146,7 @@ function MediaGallery({
 }) {
   const initialIndex = Math.max(0, items.findIndex(({ id }) => id === initialId));
   const [index, setIndex] = useState(initialIndex);
+  const [fallback, setFallback] = useState(false);
   const touchStart = useRef<number | null>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const item = items[index];
@@ -1173,11 +1174,17 @@ function MediaGallery({
       ?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }, [index]);
 
+  useEffect(() => setFallback(false), [item?.id]);
+
   if (!item) return null;
   const source =
     item.type === "video"
-      ? item.originalUrl ?? item.previewUrl ?? item.src
-      : item.previewUrl ?? item.originalUrl ?? item.src;
+      ? fallback
+        ? item.previewUrl ?? item.originalUrl ?? item.src
+        : item.originalUrl ?? item.previewUrl ?? item.src
+      : fallback
+        ? item.originalUrl ?? item.previewUrl ?? item.src
+        : item.previewUrl ?? item.originalUrl ?? item.src;
 
   return (
     <div className="media-gallery-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1220,10 +1227,24 @@ function MediaGallery({
               autoPlay
               playsInline
               preload="metadata"
+              onError={() => {
+                if (!fallback && item.previewUrl && source !== item.previewUrl) {
+                  setFallback(true);
+                }
+              }}
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
-            <img key={item.id} src={source} alt={item.title} />
+            <img
+              key={item.id}
+              src={source}
+              alt={item.title}
+              onError={() => {
+                if (!fallback && item.originalUrl && source !== item.originalUrl) {
+                  setFallback(true);
+                }
+              }}
+            />
           )}
           <button className="gallery-direction is-next" onClick={() => move(1)} aria-label="Media successivo">
             <ChevronRight size={25} />
@@ -1240,8 +1261,17 @@ function MediaGallery({
                 key={entry.id}
               >
                 {entry.type === "video" ? <Film size={14} /> : <ImageIcon size={14} />}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={entry.thumbnailUrl ?? entry.src} alt="" loading="lazy" />
+                {entry.type === "image" || entry.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      entry.thumbnailUrl ??
+                      `/api/media/${encodeURIComponent(entry.id)}/display?width=240`
+                    }
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
                 <span>{entry.title}</span>
               </button>
             ))}
