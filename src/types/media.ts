@@ -90,8 +90,11 @@ export interface PersistedMediaRecord {
 
 export interface AdvancedFilterState {
   people: string[];
+  excludePeople: string[];
   tags: string[];
+  excludeTags: string[];
   groups: string[];
+  excludeGroups: string[];
   dateFrom: string;
   dateTo: string;
   duration: "any" | "short" | "medium" | "long";
@@ -104,8 +107,11 @@ export interface AdvancedFilterState {
 
 export const emptyAdvancedFilters: AdvancedFilterState = {
   people: [],
+  excludePeople: [],
   tags: [],
+  excludeTags: [],
   groups: [],
+  excludeGroups: [],
   dateFrom: "",
   dateTo: "",
   duration: "any",

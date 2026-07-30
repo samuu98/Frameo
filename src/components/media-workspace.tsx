@@ -32,7 +32,6 @@ import {
   LoaderCircle,
   Maximize2,
   Menu,
-  MoreHorizontal,
   PanelRightClose,
   Pause,
   PencilLine,
@@ -97,6 +96,8 @@ const organizeItems = [
   { label: "Tag", value: "Tag", icon: Tag },
   { label: "Collezioni", value: "Gruppi", icon: Layers3 }
 ];
+
+const MEDIA_PAGE_SIZE = 48;
 
 const adminItems = [
   { label: "Gestione libreria", icon: HardDrive },
@@ -783,6 +784,7 @@ function MediaCard({
   quickTags,
   onOpen,
   onOpenLarge,
+  onOpenGallery,
   onSelect,
   onFavorite,
   onQuickTag
@@ -793,6 +795,7 @@ function MediaCard({
   quickTags: Array<{ name: string; color: string }>;
   onOpen: (item: MediaItem) => void;
   onOpenLarge: (item: MediaItem) => void;
+  onOpenGallery: (item: MediaItem) => void;
   onSelect: (item: MediaItem, event: MouseEvent) => void;
   onFavorite: (item: MediaItem, event: MouseEvent) => void;
   onQuickTag: (item: MediaItem, tag: string, event: MouseEvent) => void;
@@ -1009,8 +1012,15 @@ function MediaCard({
           {item.duplicateCount ? (
             <span className="duplicate-count"><CopyCheck size={11} /> {item.duplicateCount}</span>
           ) : null}
-          <button aria-label="Altre azioni">
-            <MoreHorizontal size={17} />
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenGallery(item);
+            }}
+            aria-label={`Apri ${item.title} nella galleria`}
+            title="Apri nella galleria"
+          >
+            <GalleryVerticalEnd size={16} />
           </button>
         </div>
       </div>
@@ -1119,6 +1129,124 @@ function FullMediaPlayer({
           <button onClick={() => void playerRef.current?.requestFullscreen?.()}>
             <Maximize2 size={16} /> Schermo intero
           </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function MediaGallery({
+  items,
+  initialId,
+  onClose
+}: {
+  items: MediaItem[];
+  initialId: string;
+  onClose: () => void;
+}) {
+  const initialIndex = Math.max(0, items.findIndex(({ id }) => id === initialId));
+  const [index, setIndex] = useState(initialIndex);
+  const touchStart = useRef<number | null>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const item = items[index];
+
+  const move = (direction: number) => {
+    setIndex((current) => {
+      if (!items.length) return 0;
+      return (current + direction + items.length) % items.length;
+    });
+  };
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft") move(-1);
+      if (event.key === "ArrowRight") move(1);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  });
+
+  useEffect(() => {
+    stripRef.current
+      ?.querySelector<HTMLElement>('[data-active="true"]')
+      ?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [index]);
+
+  if (!item) return null;
+  const source =
+    item.type === "video"
+      ? item.originalUrl ?? item.previewUrl ?? item.src
+      : item.previewUrl ?? item.originalUrl ?? item.src;
+
+  return (
+    <div className="media-gallery-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="media-gallery"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Galleria media"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span>GALLERIA</span>
+            <h2>{item.title}</h2>
+          </div>
+          <p>{index + 1} / {items.length}</p>
+          <button onClick={onClose} aria-label="Chiudi galleria"><X size={20} /></button>
+        </header>
+        <div
+          className="media-gallery-stage"
+          onTouchStart={(event) => {
+            touchStart.current = event.changedTouches[0]?.clientX ?? null;
+          }}
+          onTouchEnd={(event) => {
+            if (touchStart.current === null) return;
+            const distance = (event.changedTouches[0]?.clientX ?? touchStart.current) - touchStart.current;
+            if (Math.abs(distance) > 45) move(distance > 0 ? -1 : 1);
+            touchStart.current = null;
+          }}
+        >
+          <button className="gallery-direction is-previous" onClick={() => move(-1)} aria-label="Media precedente">
+            <ChevronLeft size={25} />
+          </button>
+          {item.type === "video" ? (
+            <video
+              key={item.id}
+              src={source}
+              poster={item.thumbnailUrl ?? item.src}
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={item.id} src={source} alt={item.title} />
+          )}
+          <button className="gallery-direction is-next" onClick={() => move(1)} aria-label="Media successivo">
+            <ChevronRight size={25} />
+          </button>
+        </div>
+        <footer>
+          <div className="media-gallery-strip" ref={stripRef}>
+            {items.map((entry, itemIndex) => (
+              <button
+                className={itemIndex === index ? "is-active" : ""}
+                data-active={itemIndex === index}
+                onClick={() => setIndex(itemIndex)}
+                aria-label={`Apri ${entry.title}`}
+                key={entry.id}
+              >
+                {entry.type === "video" ? <Film size={14} /> : <ImageIcon size={14} />}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={entry.thumbnailUrl ?? entry.src} alt="" loading="lazy" />
+                <span>{entry.title}</span>
+              </button>
+            ))}
+          </div>
+          <small>Scorri le miniature, usa ← → oppure fai swipe sul contenuto.</small>
         </footer>
       </section>
     </div>
@@ -2122,7 +2250,8 @@ export function MediaWorkspace() {
     uncatalogued: 0
   });
   const [mediaRefreshNonce, setMediaRefreshNonce] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [mediaLoading, setMediaLoading] = useState(true);
   const [externalScan, setExternalScan] = useState<ExternalScanState | null>(null);
   const [taxonomyPeople, setTaxonomyPeople] = useState<TaxonomyEntry[]>([]);
   const [taxonomyTags, setTaxonomyTags] = useState<TaxonomyEntry[]>([]);
@@ -2134,6 +2263,7 @@ export function MediaWorkspace() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inspected, setInspected] = useState<MediaItem | null>(null);
   const [expandedItem, setExpandedItem] = useState<MediaItem | null>(null);
+  const [galleryItem, setGalleryItem] = useState<MediaItem | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [quickMode, setQuickMode] = useState(false);
@@ -2160,15 +2290,12 @@ export function MediaWorkspace() {
       params.set("favorite", "true");
     }
     if (activeNav === "Da catalogare") params.set("uncatalogued", "true");
-    if (advancedFilters.people.length) {
-      params.set("people", advancedFilters.people.join(","));
-    }
-    if (advancedFilters.tags.length) {
-      params.set("tags", advancedFilters.tags.join(","));
-    }
-    if (advancedFilters.groups.length) {
-      params.set("groups", advancedFilters.groups.join(","));
-    }
+    advancedFilters.people.forEach((name) => params.append("person", name));
+    advancedFilters.excludePeople.forEach((name) => params.append("excludePerson", name));
+    advancedFilters.tags.forEach((name) => params.append("tag", name));
+    advancedFilters.excludeTags.forEach((name) => params.append("excludeTag", name));
+    advancedFilters.groups.forEach((name) => params.append("group", name));
+    advancedFilters.excludeGroups.forEach((name) => params.append("excludeGroup", name));
     if (folderFilter) params.set("folders", folderFilter);
     if (advancedFilters.duration === "short") params.set("durationMax", "60");
     if (advancedFilters.duration === "medium") {
@@ -2203,13 +2330,26 @@ export function MediaWorkspace() {
         advancedFilters.people.some((person) => item.people.includes(person))
       );
     }
+    if (advancedFilters.excludePeople.length) {
+      result = result.filter((item) =>
+        advancedFilters.excludePeople.every((person) => !item.people.includes(person))
+      );
+    }
     if (advancedFilters.tags.length) {
       result = result.filter((item) =>
         advancedFilters.tags.some((tag) => item.tags.includes(tag))
       );
     }
+    if (advancedFilters.excludeTags.length) {
+      result = result.filter((item) =>
+        advancedFilters.excludeTags.every((tag) => !item.tags.includes(tag))
+      );
+    }
     if (advancedFilters.groups.length) {
       result = result.filter((item) => advancedFilters.groups.includes(item.group));
+    }
+    if (advancedFilters.excludeGroups.length) {
+      result = result.filter((item) => !advancedFilters.excludeGroups.includes(item.group));
     }
     if (advancedFilters.duration !== "any") {
       result = result.filter((item) => {
@@ -2262,6 +2402,22 @@ export function MediaWorkspace() {
   const imageCount = libraryCounts.image;
   const videoCount = libraryCounts.video;
   const uncataloguedCount = libraryCounts.uncatalogued;
+  const pageCount = Math.max(1, Math.ceil(libraryTotal / MEDIA_PAGE_SIZE));
+  const pageStart = libraryTotal
+    ? (currentPage - 1) * MEDIA_PAGE_SIZE + 1
+    : 0;
+  const pageEnd = Math.min(currentPage * MEDIA_PAGE_SIZE, libraryTotal);
+  const paginationPages = [...new Set([
+    1,
+    currentPage - 2,
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    currentPage + 2,
+    pageCount
+  ])]
+    .filter((page) => page >= 1 && page <= pageCount)
+    .sort((left, right) => left - right);
   const duplicateCount = items.reduce((total, item) => total + (item.duplicateCount ?? 0), 0);
   const processingKey = items
     .filter((item) => item.status === "processing" && !item.id.startsWith("local-"))
@@ -2292,9 +2448,16 @@ export function MediaWorkspace() {
   }, []);
 
   useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+  }, [mediaQuery]);
+
+  useEffect(() => {
     let active = true;
     const params = new URLSearchParams(mediaQuery);
-    params.set("take", "200");
+    params.set("take", String(MEDIA_PAGE_SIZE));
+    params.set("page", String(currentPage));
+    setMediaLoading(true);
     void fetch(`/api/media?${params.toString()}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: {
@@ -2306,7 +2469,10 @@ export function MediaWorkspace() {
         if (!active || !Array.isArray(payload?.items)) return;
         setItems(
           payload.mode === "demo"
-            ? demoMedia
+            ? demoMedia.slice(
+                (currentPage - 1) * MEDIA_PAGE_SIZE,
+                currentPage * MEDIA_PAGE_SIZE
+              )
             : payload.items.map((item) => persistedToMedia(item))
         );
         setLibraryTotal(
@@ -2326,11 +2492,14 @@ export function MediaWorkspace() {
           });
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setMediaLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, [mediaQuery, mediaRefreshNonce]);
+  }, [currentPage, mediaQuery, mediaRefreshNonce]);
 
   useEffect(() => {
     let active = true;
@@ -2980,33 +3149,19 @@ export function MediaWorkspace() {
       });
   };
 
-  const loadMoreMedia = () => {
-    if (loadingMore || items.length >= libraryTotal) return;
-    setLoadingMore(true);
-    const params = new URLSearchParams(mediaQuery);
-    params.set("take", "200");
-    params.set("skip", String(items.length));
-    void fetch(`/api/media?${params.toString()}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload: {
-        items?: PersistedMediaRecord[];
-        total?: number;
-        counts?: { all: number; image: number; video: number; uncatalogued: number };
-      } | null) => {
-        if (!Array.isArray(payload?.items)) return;
-        const nextItems = payload.items.map((item) => persistedToMedia(item));
-        setItems((current) => {
-          const existing = new Set(current.map(({ id }) => id));
-          return [
-            ...current,
-            ...nextItems.filter(({ id }) => !existing.has(id))
-          ];
-        });
-        setLibraryTotal(payload.total ?? libraryTotal);
-        if (payload.counts) setLibraryCounts(payload.counts);
-      })
-      .catch(() => undefined)
-      .finally(() => setLoadingMore(false));
+  const goToPage = (page: number) => {
+    const nextPage = Math.max(1, Math.min(page, pageCount));
+    if (nextPage === currentPage) return;
+    setMediaLoading(true);
+    setCurrentPage(nextPage);
+    setSelectedIds(new Set());
+    setInspected(null);
+    window.requestAnimationFrame(() => {
+      document.querySelector(".library-toolbar")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
   };
 
   const navigate = (value: string) => {
@@ -3117,7 +3272,10 @@ export function MediaWorkspace() {
               <button
                 className={filter === entry.value ? "is-active" : ""}
                 key={entry.value}
-                onClick={() => setFilter(entry.value as typeof filter)}
+                onClick={() => {
+                  setMediaLoading(true);
+                  setFilter(entry.value as typeof filter);
+                }}
               >
                 {entry.label}
                 <span>{entry.count.toLocaleString("it-IT")}</span>
@@ -3130,6 +3288,7 @@ export function MediaWorkspace() {
               <select
                 value={folderFilter}
                 onChange={(event) => {
+                  setMediaLoading(true);
                   setFolderFilter(event.target.value);
                   setSelectedIds(new Set());
                 }}
@@ -3200,6 +3359,14 @@ export function MediaWorkspace() {
               >
                 <GalleryVerticalEnd size={17} />
               </button>
+              <button
+                onClick={() => setGalleryItem(visibleItems[0] ?? null)}
+                aria-label="Apri galleria"
+                title="Apri galleria scorrevole"
+                disabled={!visibleItems.length || mediaLoading}
+              >
+                <ImageIcon size={17} />
+              </button>
             </div>
           </div>
         </section>
@@ -3214,13 +3381,47 @@ export function MediaWorkspace() {
                 <X size={12} />
               </button>
             ) : null}
-            {[...advancedFilters.people, ...advancedFilters.tags, ...advancedFilters.groups].map((entry) => (
-              <button key={entry} onClick={() => setAdvancedFilters((current) => ({
+            {[
+              ...advancedFilters.people.map((name) => ({ kind: "person", name })),
+              ...advancedFilters.tags.map((name) => ({ kind: "tag", name })),
+              ...advancedFilters.groups.map((name) => ({ kind: "group", name }))
+            ].map(({ kind, name }) => (
+              <button key={`include-${kind}-${name}`} onClick={() => setAdvancedFilters((current) => ({
                 ...current,
-                people: current.people.filter((value) => value !== entry),
-                tags: current.tags.filter((value) => value !== entry),
-                groups: current.groups.filter((value) => value !== entry)
-              }))}>{entry}<X size={12} /></button>
+                people: kind === "person"
+                  ? current.people.filter((value) => value !== name)
+                  : current.people,
+                tags: kind === "tag"
+                  ? current.tags.filter((value) => value !== name)
+                  : current.tags,
+                groups: kind === "group"
+                  ? current.groups.filter((value) => value !== name)
+                  : current.groups
+              }))}>{name}<X size={12} /></button>
+            ))}
+            {[
+              ...advancedFilters.excludePeople.map((name) => ({ kind: "person", name })),
+              ...advancedFilters.excludeTags.map((name) => ({ kind: "tag", name })),
+              ...advancedFilters.excludeGroups.map((name) => ({ kind: "group", name }))
+            ].map(({ kind, name }) => (
+              <button
+                className="is-negative"
+                key={`exclude-${kind}-${name}`}
+                onClick={() => setAdvancedFilters((current) => ({
+                  ...current,
+                  excludePeople: kind === "person"
+                    ? current.excludePeople.filter((value) => value !== name)
+                    : current.excludePeople,
+                  excludeTags: kind === "tag"
+                    ? current.excludeTags.filter((value) => value !== name)
+                    : current.excludeTags,
+                  excludeGroups: kind === "group"
+                    ? current.excludeGroups.filter((value) => value !== name)
+                    : current.excludeGroups
+                }))}
+              >
+                Senza {name}<X size={12} />
+              </button>
             ))}
             {advancedFilters.markerOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, markerOnly: false }))}>con marker<X size={12} /></button> : null}
             {advancedFilters.duplicateOnly ? <button onClick={() => setAdvancedFilters((current) => ({ ...current, duplicateOnly: false }))}>duplicati<X size={12} /></button> : null}
@@ -3271,21 +3472,32 @@ export function MediaWorkspace() {
             facets={personFacets}
             activeTag={advancedFilters.tags[0]}
             activeGroup={advancedFilters.groups[0]}
-            onAll={() => setAdvancedFilters((current) => ({
-              ...current,
-              tags: [],
-              groups: []
-            }))}
-            onTag={(name) => setAdvancedFilters((current) => ({
-              ...current,
-              tags: [name],
-              groups: []
-            }))}
-            onGroup={(name) => setAdvancedFilters((current) => ({
-              ...current,
-              tags: [],
-              groups: [name]
-            }))}
+            onAll={() => {
+              setMediaLoading(true);
+              setAdvancedFilters((current) => ({
+                ...current,
+                tags: [],
+                groups: []
+              }));
+            }}
+            onTag={(name) => {
+              setMediaLoading(true);
+              setAdvancedFilters((current) => ({
+                ...current,
+                tags: [name],
+                excludeTags: current.excludeTags.filter((entry) => entry !== name),
+                groups: []
+              }));
+            }}
+            onGroup={(name) => {
+              setMediaLoading(true);
+              setAdvancedFilters((current) => ({
+                ...current,
+                tags: [],
+                groups: [name],
+                excludeGroups: current.excludeGroups.filter((entry) => entry !== name)
+              }));
+            }}
           />
         ) : null}
 
@@ -3295,7 +3507,12 @@ export function MediaWorkspace() {
             entries={taxonomyPeople}
             onCreate={(name) => createTaxonomyEntry("PERSON", name)}
             onOpen={(name) => {
-              setAdvancedFilters((current) => ({ ...current, people: [name] }));
+              setMediaLoading(true);
+              setAdvancedFilters((current) => ({
+                ...current,
+                people: [name],
+                excludePeople: current.excludePeople.filter((entry) => entry !== name)
+              }));
               setActiveNav("Libreria");
             }}
             onManageImages={setReferencePerson}
@@ -3306,7 +3523,12 @@ export function MediaWorkspace() {
             entries={taxonomyTags}
             onCreate={(name) => createTaxonomyEntry("TAG", name)}
             onOpen={(name) => {
-              setAdvancedFilters((current) => ({ ...current, tags: [name] }));
+              setMediaLoading(true);
+              setAdvancedFilters((current) => ({
+                ...current,
+                tags: [name],
+                excludeTags: current.excludeTags.filter((entry) => entry !== name)
+              }));
               setActiveNav("Libreria");
             }}
           />
@@ -3323,33 +3545,49 @@ export function MediaWorkspace() {
               </div>
             ) : null}
 
-            <section
-              className={[
-                "media-grid",
-                view === "compact" ? "is-compact" : "",
-                view === "stories" ? "is-stories" : ""
-              ].join(" ")}
-            >
-              {visibleItems.map((item) => (
-                <MediaCard
-                  item={item}
-                  selected={selectedIds.has(item.id)}
-                  quickMode={quickMode}
-                  quickTags={taxonomyTags.map(({ name, color }) => ({
-                    name,
-                    color: color ?? "#6D5DFB"
-                  }))}
-                  onOpen={setInspected}
-                  onOpenLarge={setExpandedItem}
-                  onSelect={toggleSelect}
-                  onFavorite={toggleFavorite}
-                  onQuickTag={addTag}
-                  key={item.id}
-                />
-              ))}
-            </section>
+            {mediaLoading ? (
+              <section className="media-loading-state" aria-label="Caricamento pagina">
+                <div>
+                  <LoaderCircle className="spin" size={22} />
+                  <span>
+                    <strong>Carico la pagina {currentPage}</strong>
+                    <small>Sto applicando filtri e ordinamento all’intero catalogo…</small>
+                  </span>
+                </div>
+                <div className="media-loading-grid">
+                  {Array.from({ length: 12 }).map((_, index) => <i key={index} />)}
+                </div>
+              </section>
+            ) : (
+              <section
+                className={[
+                  "media-grid",
+                  view === "compact" ? "is-compact" : "",
+                  view === "stories" ? "is-stories" : ""
+                ].join(" ")}
+              >
+                {visibleItems.map((item) => (
+                  <MediaCard
+                    item={item}
+                    selected={selectedIds.has(item.id)}
+                    quickMode={quickMode}
+                    quickTags={taxonomyTags.map(({ name, color }) => ({
+                      name,
+                      color: color ?? "#6D5DFB"
+                    }))}
+                    onOpen={setInspected}
+                    onOpenLarge={setExpandedItem}
+                    onOpenGallery={setGalleryItem}
+                    onSelect={toggleSelect}
+                    onFavorite={toggleFavorite}
+                    onQuickTag={addTag}
+                    key={item.id}
+                  />
+                ))}
+              </section>
+            )}
 
-            {!visibleItems.length ? (
+            {!mediaLoading && !visibleItems.length ? (
               <section className="empty-state">
                 <Archive size={28} />
                 <h2>Nessun media qui, per ora.</h2>
@@ -3363,13 +3601,40 @@ export function MediaWorkspace() {
 
             <footer className="content-footer">
               <span>
-                Mostrati {visibleItems.length} di {libraryTotal.toLocaleString("it-IT")} media
+                {libraryTotal
+                  ? `${pageStart.toLocaleString("it-IT")}–${pageEnd.toLocaleString("it-IT")} di ${libraryTotal.toLocaleString("it-IT")} media`
+                  : "Nessun media"}
               </span>
-              {items.length < libraryTotal ? (
-                <button onClick={loadMoreMedia} disabled={loadingMore}>
-                  {loadingMore ? "Caricamento…" : "Carica altri 200"}
+              <nav className="media-pagination" aria-label="Pagine della libreria">
+                <button
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1 || mediaLoading}
+                  aria-label="Pagina precedente"
+                >
+                  <ChevronLeft size={16} />
                 </button>
-              ) : null}
+                {paginationPages.map((page, index) => (
+                  <span key={page}>
+                    {index > 0 && page - paginationPages[index - 1] > 1 ? <i>…</i> : null}
+                    <button
+                      className={page === currentPage ? "is-active" : ""}
+                      onClick={() => goToPage(page)}
+                      disabled={mediaLoading}
+                      aria-label={`Pagina ${page}`}
+                      aria-current={page === currentPage ? "page" : undefined}
+                    >
+                      {page}
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage === pageCount || mediaLoading}
+                  aria-label="Pagina successiva"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </nav>
             </footer>
           </>
         )}
@@ -3404,6 +3669,13 @@ export function MediaWorkspace() {
         <FullMediaPlayer
           item={expandedItem}
           onClose={() => setExpandedItem(null)}
+        />
+      ) : null}
+      {galleryItem ? (
+        <MediaGallery
+          items={visibleItems}
+          initialId={galleryItem.id}
+          onClose={() => setGalleryItem(null)}
         />
       ) : null}
 
@@ -3446,8 +3718,11 @@ export function MediaWorkspace() {
           people={taxonomyPeople.map(({ name }) => name)}
           tags={taxonomyTags.map(({ name }) => name)}
           groups={taxonomyGroups.map(({ name }) => name)}
-          resultCount={visibleItems.length}
-          onApply={setAdvancedFilters}
+          resultCount={libraryTotal}
+          onApply={(filters) => {
+            setMediaLoading(true);
+            setAdvancedFilters(filters);
+          }}
           onClose={() => setFiltersOpen(false)}
         />
       ) : null}

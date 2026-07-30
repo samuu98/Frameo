@@ -17,16 +17,37 @@ import {
 import { useState } from "react";
 import type { AdvancedFilterState } from "@/types/media";
 
-const toggleValue = (values: string[], value: string) =>
-  values.includes(value)
-    ? values.filter((entry) => entry !== value)
-    : [...values, value];
+const cycleTaxonomyValue = (
+  included: string[],
+  excluded: string[],
+  value: string
+) => {
+  if (included.includes(value)) {
+    return {
+      included: included.filter((entry) => entry !== value),
+      excluded: [...excluded, value]
+    };
+  }
+  if (excluded.includes(value)) {
+    return {
+      included,
+      excluded: excluded.filter((entry) => entry !== value)
+    };
+  }
+  return {
+    included: [...included, value],
+    excluded
+  };
+};
 
 export function countAdvancedFilters(filters: AdvancedFilterState) {
   return (
     filters.people.length +
+    filters.excludePeople.length +
     filters.tags.length +
+    filters.excludeTags.length +
     filters.groups.length +
+    filters.excludeGroups.length +
     Number(Boolean(filters.dateFrom || filters.dateTo)) +
     Number(filters.duration !== "any") +
     Number(filters.resolution !== "any") +
@@ -59,8 +80,11 @@ export function AdvancedFilters({
   const reset = () =>
     setDraft({
       people: [],
+      excludePeople: [],
       tags: [],
+      excludeTags: [],
       groups: [],
+      excludeGroups: [],
       dateFrom: "",
       dateTo: "",
       duration: "any",
@@ -86,23 +110,38 @@ export function AdvancedFilters({
           <section className="filter-section">
             <div className="filter-section-heading">
               <UsersRound size={16} />
-              <div><strong>Persone</strong><small>Una o più persone nel media</small></div>
+              <div>
+                <strong>Persone</strong>
+                <small>1° clic include · 2° esclude · 3° rimuove</small>
+              </div>
             </div>
             <div className="filter-choice-grid">
-              {people.map((person) => (
-                <button
-                  className={draft.people.includes(person) ? "is-selected" : ""}
-                  key={person}
-                  onClick={() => setDraft((current) => ({
-                    ...current,
-                    people: toggleValue(current.people, person)
-                  }))}
-                >
-                  <span>{person.slice(0, 1)}</span>
-                  {person}
-                  {draft.people.includes(person) ? <Check size={13} /> : null}
-                </button>
-              ))}
+              {people.map((person) => {
+                const included = draft.people.includes(person);
+                const excluded = draft.excludePeople.includes(person);
+                return (
+                  <button
+                    className={included ? "is-selected" : excluded ? "is-excluded" : ""}
+                    key={person}
+                    onClick={() => setDraft((current) => {
+                      const next = cycleTaxonomyValue(
+                        current.people,
+                        current.excludePeople,
+                        person
+                      );
+                      return {
+                        ...current,
+                        people: next.included,
+                        excludePeople: next.excluded
+                      };
+                    })}
+                  >
+                    <span>{person.slice(0, 1)}</span>
+                    {person}
+                    {included ? <Check size={13} /> : excluded ? <X size={13} /> : null}
+                  </button>
+                );
+              })}
             </div>
           </section>
 
@@ -114,35 +153,59 @@ export function AdvancedFilters({
             <label className="filter-select-label">
               <span>TAG</span>
               <div className="filter-chip-field">
-                {tags.map((tag) => (
-                  <button
-                    className={draft.tags.includes(tag) ? "is-selected" : ""}
-                    key={tag}
-                    onClick={() => setDraft((current) => ({
-                      ...current,
-                      tags: toggleValue(current.tags, tag)
-                    }))}
-                  >
-                    {tag}
-                  </button>
-                ))}
+                {tags.map((tag) => {
+                  const included = draft.tags.includes(tag);
+                  const excluded = draft.excludeTags.includes(tag);
+                  return (
+                    <button
+                      className={included ? "is-selected" : excluded ? "is-excluded" : ""}
+                      key={tag}
+                      onClick={() => setDraft((current) => {
+                        const next = cycleTaxonomyValue(
+                          current.tags,
+                          current.excludeTags,
+                          tag
+                        );
+                        return {
+                          ...current,
+                          tags: next.included,
+                          excludeTags: next.excluded
+                        };
+                      })}
+                    >
+                      {excluded ? "SENZA " : ""}{tag}
+                    </button>
+                  );
+                })}
               </div>
             </label>
             <label className="filter-select-label">
               <span>GRUPPI</span>
               <div className="filter-chip-field">
-                {groups.map((group) => (
-                  <button
-                    className={draft.groups.includes(group) ? "is-selected" : ""}
-                    key={group}
-                    onClick={() => setDraft((current) => ({
-                      ...current,
-                      groups: toggleValue(current.groups, group)
-                    }))}
-                  >
-                    {group}
-                  </button>
-                ))}
+                {groups.map((group) => {
+                  const included = draft.groups.includes(group);
+                  const excluded = draft.excludeGroups.includes(group);
+                  return (
+                    <button
+                      className={included ? "is-selected" : excluded ? "is-excluded" : ""}
+                      key={group}
+                      onClick={() => setDraft((current) => {
+                        const next = cycleTaxonomyValue(
+                          current.groups,
+                          current.excludeGroups,
+                          group
+                        );
+                        return {
+                          ...current,
+                          groups: next.included,
+                          excludeGroups: next.excluded
+                        };
+                      })}
+                    >
+                      {excluded ? "SENZA " : ""}{group}
+                    </button>
+                  );
+                })}
               </div>
             </label>
           </section>

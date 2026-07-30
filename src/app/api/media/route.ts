@@ -41,8 +41,20 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const take = Math.min(Number(url.searchParams.get("take") ?? 60), 200);
-  const skip = Math.max(0, Number(url.searchParams.get("skip") ?? 0));
+  const requestedTake = Number(url.searchParams.get("take") ?? 48);
+  const take = Math.max(
+    1,
+    Math.min(Number.isFinite(requestedTake) ? Math.floor(requestedTake) : 48, 200)
+  );
+  const requestedPage = Number(url.searchParams.get("page") ?? 1);
+  const page = Math.max(
+    1,
+    Number.isFinite(requestedPage) ? Math.floor(requestedPage) : 1
+  );
+  const requestedSkip = Number(url.searchParams.get("skip"));
+  const skip = url.searchParams.has("skip")
+    ? Math.max(0, Number.isFinite(requestedSkip) ? Math.floor(requestedSkip) : 0)
+    : (page - 1) * take;
   const user = await getRequestUser(request);
   const where = buildMediaWhere(url, user);
 
@@ -82,6 +94,9 @@ export async function GET(request: Request) {
   return NextResponse.json({
     items: items.map(mediaToJson),
     total,
+    page,
+    pageSize: take,
+    pageCount: Math.max(1, Math.ceil(total / take)),
     counts: {
       all: imageCount + videoCount,
       image: imageCount,

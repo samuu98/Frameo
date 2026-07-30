@@ -11,6 +11,12 @@ const csv = (value: string | null) =>
     .map((entry) => entry.trim())
     .filter(Boolean) ?? [];
 
+const taxonomyValues = (url: URL, key: string, legacyKey: string) =>
+  [...new Set([
+    ...url.searchParams.getAll(key),
+    ...csv(url.searchParams.get(legacyKey))
+  ].map((entry) => entry.trim()).filter(Boolean))];
+
 const finiteNumber = (value: string | null) => {
   if (!value) return null;
   const parsed = Number(value);
@@ -24,9 +30,12 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
     .filter((status): status is MediaStatus =>
       Object.values(MediaStatus).includes(status as MediaStatus)
     );
-  const people = csv(url.searchParams.get("people"));
-  const tags = csv(url.searchParams.get("tags"));
-  const groups = csv(url.searchParams.get("groups"));
+  const people = taxonomyValues(url, "person", "people");
+  const excludePeople = taxonomyValues(url, "excludePerson", "excludePeople");
+  const tags = taxonomyValues(url, "tag", "tags");
+  const excludeTags = taxonomyValues(url, "excludeTag", "excludeTags");
+  const groups = taxonomyValues(url, "group", "groups");
+  const excludeGroups = taxonomyValues(url, "excludeGroup", "excludeGroups");
   const folders = csv(url.searchParams.get("folders"));
   const search = url.searchParams.get("search")?.trim();
   const durationMin = finiteNumber(url.searchParams.get("durationMin"));
@@ -68,11 +77,26 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   if (people.length) {
     filters.push({ people: { some: { person: { name: { in: people } } } } });
   }
+  if (excludePeople.length) {
+    filters.push({
+      people: { none: { person: { name: { in: excludePeople } } } }
+    });
+  }
   if (tags.length) {
     filters.push({ tags: { some: { tag: { name: { in: tags } } } } });
   }
+  if (excludeTags.length) {
+    filters.push({
+      tags: { none: { tag: { name: { in: excludeTags } } } }
+    });
+  }
   if (groups.length) {
     filters.push({ groups: { some: { group: { name: { in: groups } } } } });
+  }
+  if (excludeGroups.length) {
+    filters.push({
+      groups: { none: { group: { name: { in: excludeGroups } } } }
+    });
   }
   if (folders.length) {
     filters.push({
