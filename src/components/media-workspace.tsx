@@ -1164,6 +1164,7 @@ function MediaCard({
             {item.type === "video" ? <Film size={13} /> : <ImageIcon size={13} />}
             {item.type === "video" ? "VIDEO" : "FOTO"}
           </span>
+          {item.showOnTv ? <span className="media-tv-badge" title="Presente nella Galleria TV" aria-label="Presente nella Galleria TV"><Tv size={12} /> TV</span> : null}
           <button
             className={item.favorite ? "favorite is-favorite" : "favorite"}
             onClick={(event) => onFavorite(item, event)}
@@ -1180,7 +1181,8 @@ function MediaCard({
           aria-pressed={!item.hideFromRandomHome}
           disabled={homeSaving}
           onClick={async (event) => { event.stopPropagation(); if (homeSaving) return; setHomeSaving(true); try { await onHomeVisibility(item); } finally { setHomeSaving(false); } }}
-        ><Shuffle size={14} /><span>{homeSaving ? "Salvo…" : item.hideFromRandomHome ? "Fuori home" : "In home"}</span></button> : null}
+          title={homeSaving ? "Salvataggio…" : item.hideFromRandomHome ? "Includi nella home" : "Escludi dalla home"}
+        ><Shuffle size={12} /><span>{homeSaving ? "…" : "Home"}</span></button> : null}
 
         {item.type === "video" && !isProcessing && !quickMode ? (
           <div className="card-play-actions">

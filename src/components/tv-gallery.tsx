@@ -5,7 +5,7 @@ import { demoMedia } from "@/data/media";
 import { demoTvStorageKey, readDemoTvSelection } from "@/lib/demo-tv-selection";
 import type { PersistedMediaRecord } from "@/types/media";
 
-type TvItem = Pick<PersistedMediaRecord, "id" | "title" | "kind" | "thumbnailUrl" | "originalUrl" | "streamUrl" | "favorite" | "showOnTv" | "durationMs"> & { demo?: boolean };
+type TvItem = Pick<PersistedMediaRecord, "id" | "title" | "kind" | "thumbnailUrl" | "previewUrl" | "originalUrl" | "streamUrl" | "favorite" | "showOnTv" | "durationMs"> & { demo?: boolean };
 type Filter = "all" | "video" | "image" | "favorites";
 const filters: Array<{ value: Filter; label: string }> = [
   { value: "all", label: "Tutti" }, { value: "video", label: "Video" },
@@ -14,7 +14,7 @@ const filters: Array<{ value: Filter; label: string }> = [
 const pageSize = 24;
 const demoItems: TvItem[] = demoMedia.filter((item) => item.status === "ready").map((item) => ({
   id: item.id, title: item.title, kind: item.type === "video" ? "VIDEO" : "IMAGE",
-  thumbnailUrl: item.src, originalUrl: item.src, streamUrl: null,
+  thumbnailUrl: item.src, previewUrl: null, originalUrl: item.src, streamUrl: null,
   favorite: Boolean(item.favorite), showOnTv: false, durationMs: item.durationMs ?? null, demo: true
 }));
 
@@ -162,8 +162,7 @@ export function TvGallery() {
             setSelected(index);
           }} aria-label={`${item.kind === "VIDEO" ? "Video" : "Foto"}: ${item.title}`}>
           <div className="tv-thumbnail">
-            {item.thumbnailUrl || item.kind === "IMAGE" ? <img loading="lazy" alt=""
-              src={item.kind === "IMAGE" && !item.demo ? `/api/media/${item.id}/display?width=640` : item.thumbnailUrl ?? item.originalUrl} /> : <span className="tv-placeholder">▶</span>}
+            <TvThumbnail item={item} active={selected === null} />
             <span className="tv-badge">{item.kind === "VIDEO" ? `▶ ${time((item.durationMs ?? 0) / 1000)}` : "Foto"}{item.favorite ? " · ♥" : ""}</span>
           </div><strong>{item.title}</strong>
         </button>)}
@@ -178,6 +177,30 @@ export function TvGallery() {
   </main>;
 }
 
+function TvThumbnail({ item, active }: { item: TvItem; active: boolean }) {
+  const container = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), { threshold: .15 });
+    observer.observe(element);
+    const updateVisibility = () => setPageVisible(!document.hidden);
+    updateVisibility();
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => { observer.disconnect(); document.removeEventListener("visibilitychange", updateVisibility); };
+  }, []);
+  const preview = active && visible && pageVisible && !failed && item.kind === "VIDEO" && !item.demo && item.previewUrl;
+  return <div ref={container} className="tv-preview">
+    {item.thumbnailUrl || item.kind === "IMAGE" ? <img loading="lazy" alt=""
+      src={item.kind === "IMAGE" && !item.demo ? `/api/media/${item.id}/display?width=900` : item.thumbnailUrl ?? item.originalUrl} /> : <span className="tv-placeholder">▶</span>}
+    {preview ? <video src={preview} poster={item.thumbnailUrl ?? undefined} muted loop autoPlay playsInline preload="none" aria-hidden="true"
+      onError={() => setFailed(true)} /> : null}
+  </div>;
+}
+
 function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
   item: TvItem; index: number; count: number; onClose: () => void; onPrevious?: () => void; onNext?: () => void;
 }) {
@@ -185,11 +208,32 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
   const video = useRef<HTMLVideoElement>(null);
   const playButton = useRef<HTMLButtonElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState((item.durationMs ?? 0) / 1000);
   const [source, setSource] = useState(item.streamUrl && !item.streamUrl.includes(".m3u8") ? item.streamUrl : item.originalUrl);
   const isVideo = item.kind === "VIDEO" && !item.demo;
+
+  useEffect(() => {
+    const element = root.current;
+    const change = () => setFullscreen(document.fullscreenElement === root.current);
+    document.addEventListener("fullscreenchange", change);
+    return () => {
+      document.removeEventListener("fullscreenchange", change);
+      if (document.fullscreenElement === element) void document.exitFullscreen().catch(() => undefined);
+    };
+  }, []);
+
+  function enterFullscreen() {
+    if (!document.fullscreenElement && root.current?.requestFullscreen) {
+      void root.current.requestFullscreen().catch(() => undefined);
+    }
+  }
+  function close() {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    onClose();
+  }
 
   useEffect(() => {
     focus(playButton.current ?? root.current?.querySelector<HTMLElement>("button:not(:disabled)"));
@@ -211,7 +255,10 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
 
   function togglePlayback() {
     if (!video.current) return;
-    if (video.current.paused) void video.current.play().catch(() => setError("Riproduzione non riuscita. Se il formato non è supportato, prepara il video compatibile dalla libreria sul computer."));
+    if (video.current.paused) {
+      enterFullscreen();
+      void video.current.play().catch(() => setError("Riproduzione non riuscita. Se il formato non è supportato, prepara il video compatibile dalla libreria sul computer."));
+    }
     else video.current.pause();
   }
   function seek(offset: number) {
@@ -224,7 +271,7 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
     const onKey = (event: KeyboardEvent) => {
       const code = event.keyCode;
       if (["Escape", "Backspace", "BrowserBack", "GoBack"].includes(event.key) || code === 4) {
-        event.preventDefault(); onClose();
+        event.preventDefault(); close();
       } else if (isVideo && (event.key === "MediaPlayPause" || event.key === " " || code === 179)) {
         event.preventDefault(); togglePlayback();
       } else if (isVideo && (event.key === "MediaRewind" || code === 227)) {
@@ -248,7 +295,7 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
 
   return <div className="tv-viewer" role="dialog" aria-modal="true" aria-label={item.title} ref={root}>
     <header><div><h2>{item.title}</h2><p>{index + 1} / {count} in questa pagina{item.demo ? " · Anteprima demo" : ""}</p></div>
-      <button onClick={onClose}>Chiudi ✕</button></header>
+      <button onClick={close}>Chiudi ✕</button></header>
     <div className="tv-stage">
       {isVideo ? <video key={source} ref={video} src={source} poster={item.thumbnailUrl ?? undefined} playsInline preload="metadata"
         onPlay={() => { setPlaying(true); setError(""); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
@@ -264,6 +311,7 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
       {isVideo ? <><button onClick={() => seek(-10)}>−10 s</button>
         <button ref={playButton} onClick={togglePlayback}>{playing ? "Pausa" : "Riproduci"}</button>
         <button onClick={() => seek(10)}>+10 s</button><span>{time(elapsed)} / {time(duration)}</span></> : null}
+      <button onClick={() => fullscreen ? void document.exitFullscreen().catch(() => undefined) : enterFullscreen()}>{fullscreen ? "Esci da schermo intero" : "Schermo intero"}</button>
       <button disabled={!onNext} onClick={onNext}>Successivo →</button>
     </footer>
   </div>;

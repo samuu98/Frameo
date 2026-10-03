@@ -25,6 +25,7 @@ try {
   await toggle.click();
   await page.waitForFunction(() => document.querySelector('[aria-label="Mostra nella Galleria TV"]')?.getAttribute("aria-checked") === "true");
   assert.equal(writes.at(-1).showOnTv, true);
+  assert.equal(await page.locator('.media-card .media-tv-badge').count(), 1);
   fail = true;
   await toggle.click();
   await page.getByText("Permessi di modifica richiesti", { exact: true }).waitFor();
@@ -36,6 +37,7 @@ try {
   await page.getByRole("button", { name: "Aggiungi alla TV", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".bulk-tv-actions button")?.disabled === true);
   assert.equal(writes.at(-1).mediaIds.length, 2);
+  assert.equal(await page.locator('.media-card .media-tv-badge').count(), 2);
   assert.equal(writes.at(-1).showOnTv, true);
   await page.setViewportSize({ width: 390, height: 844 });
   const remove = page.getByRole("button", { name: "Rimuovi dalla TV", exact: true });
@@ -53,6 +55,7 @@ try {
   await remove.click();
   await page.waitForFunction(() => document.querySelector(".bulk-tv-actions button:last-child")?.disabled === true);
   assert.equal(writes.at(-1).showOnTv, false);
+  assert.equal(await page.locator('.media-card .media-tv-badge').count(), 0);
   await tvPage.getByText("La Galleria TV è vuota.", { exact: false }).waitFor();
   assert.equal(await tvPage.locator("[data-tv-card]").count(), 0);
   assert.deepEqual(errors, []);

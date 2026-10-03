@@ -66,6 +66,12 @@ demo, in cui i video sono anteprime statiche e la selezione TV viene salvata sol
 nel browser usato per sceglierla, senza sincronizzazione con altri dispositivi.
 
 La navigazione può essere verificata anche da computer con frecce, Invio e Escape.
+Le miniature della libreria mostrano il tag **TV** sui contenuti inclusi. Nella
+pagina TV le card sono più grandi e le clip di anteprima disponibili si riproducono
+automaticamente senza audio, solo mentre sono visibili; si fermano quando apri
+un contenuto. Avviando un video, il lettore richiede lo schermo intero. Puoi anche
+usare **Schermo intero** / **Esci da schermo intero**; se il browser non lo consente,
+il lettore resta a tutta pagina con gli stessi comandi.
 La riproduzione e i tasti effettivamente inoltrati da Silk vanno verificati sulla
 Fire Stick utilizzata.
 

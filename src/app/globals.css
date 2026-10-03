@@ -10949,7 +10949,8 @@ body {
 .card-gallery-labels { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0; }
 .card-gallery-labels > span { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 5px; font-size: 10px; overflow-wrap: anywhere; }
 .card-gallery-labels svg { flex-shrink: 0; }
-.card-home-toggle { position: absolute; z-index: 6; top: 46px; right: 10px; display: flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 8px; color: white; background: rgba(28, 55, 45, .9); border: 1px solid rgba(255,255,255,.5); border-radius: 7px; font-size: 10px; }
+.card-home-toggle { position: absolute; z-index: 6; top: 44px; right: 10px; display: flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 6px; color: white; background: rgba(28, 55, 45, .9); border: 1px solid rgba(255,255,255,.5); border-radius: 5px; font-size: 9px; }
+.media-tv-badge { margin-left: 6px; margin-right: auto; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 4px; color: #e3dcff; background: rgba(66, 47, 110, .92); border: 1px solid rgba(190, 172, 255, .5); font-size: 9px; font-weight: 800; }
 .card-home-toggle.is-excluded { background: rgba(50, 45, 42, .9); }
 .card-home-toggle:disabled { opacity: .6; }
 .media-card:focus-within .select-control { opacity: 1; }
@@ -10958,7 +10959,7 @@ body {
 @media (hover: none), (pointer: coarse) {
   .media-card .select-control { opacity: 1; width: 40px; height: 40px; }
   .media-card .select-control + .media-topline .media-type { margin-left: 46px; }
-  .card-home-toggle { min-height: 44px; }
+  .card-home-toggle::before { content: ""; position: absolute; inset: -10px -5px; }
 }
 @media (max-width: 860px) {
   .performer-home-header > div { flex-wrap: wrap; }
