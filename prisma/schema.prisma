@@ -72,6 +72,20 @@ enum ImportState {
   FAILED
 }
 
+enum DownloadSource {
+  TELEGRAM
+  WEB
+}
+
+enum DownloadState {
+  PENDING
+  DOWNLOADING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
 model MediaAsset {
   id                  String            @id @default(cuid())
   title               String
@@ -97,6 +111,8 @@ model MediaAsset {
   perceptualHash      String?
   directoryKey        String?
   favorite            Boolean           @default(false)
+  showOnTv            Boolean           @default(false)
+  hideFromRandomHome  Boolean           @default(false)
   rating              Int               @default(0)
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
@@ -111,7 +127,10 @@ model MediaAsset {
   editOutputs         EditProject[]     @relation("EditOutput")
   fileOperations      FileOperation[]
   personReferences    PersonReferenceImage[]
+  coverForPeople      Person[]          @relation("PersonCoverImage")
+  profileForPeople    Person[]          @relation("PersonProfileImage")
   importAttempt       ImportAttempt?
+  downloadJobs        DownloadJob[]
   sourceMedia         MediaAsset?       @relation("VideoScreenshots", fields: [sourceMediaId], references: [id], onDelete: SetNull)
   screenshots         MediaAsset[]      @relation("VideoScreenshots")
 
@@ -122,6 +141,33 @@ model MediaAsset {
   @@index([perceptualHash])
   @@index([directoryKey])
   @@index([sourceMediaId, sourceTimeMs])
+}
+
+model DownloadJob {
+  id              String         @id @default(cuid())
+  source          DownloadSource
+  sourceUrl       String
+  sourceKey       String
+  state           DownloadState  @default(PENDING)
+  progress        Int            @default(0)
+  downloadedBytes BigInt         @default(0)
+  totalBytes      BigInt         @default(0)
+  speedBps        BigInt         @default(0)
+  etaSeconds      Int?
+  fileName        String?
+  targetPath      String?
+  error           String?
+  attempts        Int            @default(0)
+  mediaId         String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  startedAt       DateTime?
+  completedAt     DateTime?
+  media           MediaAsset?    @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@unique([source, sourceKey])
+  @@index([state, createdAt])
+  @@index([mediaId])
 }
 
 model ImportAttempt {
@@ -147,11 +193,18 @@ model Person {
   id              String                 @id @default(cuid())
   name            String
   avatarUrl       String?
+  coverMediaId    String?
+  profileMediaId  String?
   createdAt       DateTime               @default(now())
   media           MediaPerson[]
   referenceImages PersonReferenceImage[]
+  galleries       Group[]
+  coverMedia      MediaAsset?             @relation("PersonCoverImage", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  profileMedia    MediaAsset?             @relation("PersonProfileImage", fields: [profileMediaId], references: [id], onDelete: SetNull)
 
   @@unique([name])
+  @@index([coverMediaId])
+  @@index([profileMediaId])
 }
 
 model PersonReferenceImage {
@@ -201,11 +254,14 @@ model Group {
   name        String
   description String?
   accent      String       @default("#F97316")
+  ownerPersonId String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   media       GroupMedia[]
+  ownerPerson Person?      @relation(fields: [ownerPersonId], references: [id], onDelete: Cascade)
 
   @@unique([name])
+  @@index([ownerPersonId])
 }
 
 model GroupMedia {

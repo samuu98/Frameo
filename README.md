@@ -7,6 +7,7 @@ catalogare e riprodurre foto e video dal browser.
 
 - UI responsive per desktop, tablet e mobile
 - upload drag-and-drop in streaming, senza tenere l'intero file in memoria
+- Download center Telegram e pagine web, con coda persistente, avanzamento e ripresa dei file parziali
 - thumbnail e preview WebP per le immagini tramite Sharp
 - thumbnail, clip preview e playlist HLS per i video tramite FFmpeg
 - streaming HTTP con supporto `Range` per seek e riproduzione progressiva
@@ -27,6 +28,46 @@ catalogare e riprodurre foto e video dal browser.
 - catalogazione rapida, selezione multipla, ricerca e pannello dettagli
 - modalità demo automatica quando non è configurato un database
 - immagine Docker singola più PostgreSQL in Docker Compose
+
+## Galleria su Fire TV Stick
+
+La pagina `/tv` contiene solo la galleria, con interfaccia scura, miniature grandi,
+filtri Tutti / Video / Foto / Preferiti e 24 contenuti per pagina. È disponibile
+anche dal collegamento **Galleria TV** nella barra laterale del sito.
+
+1. Apri Amazon Silk sulla Fire TV Stick.
+2. Usa l'indirizzo del server Frameo seguito da `/tv`, per esempio
+   `http://192.168.1.50:3000/tv`. Fire Stick e server devono essere sulla stessa
+   rete, con la porta del sito raggiungibile. `localhost` sulla TV indica la TV,
+   non il computer che ospita Frameo.
+3. Salva l'indirizzo nei preferiti di Silk.
+
+Le frecce spostano la selezione e OK apre foto e video nel visualizzatore a tutta
+pagina. Indietro chiude il visualizzatore; sono disponibili anche pulsanti grandi
+per chiudere e passare al contenuto precedente o successivo della pagina corrente.
+Per i video, premi **Riproduci**: il telecomando può anche controllare play/pausa
+e avanzamento/riavvolgimento di 10 secondi quando Silk inoltra questi tasti al sito.
+I pulsanti a schermo restano utilizzabili anche con il puntatore di Silk.
+
+Per scegliere cosa mostrare sulla TV, apri un contenuto nella libreria e attiva
+**Mostra nella Galleria TV** nel pannello dei dettagli. Puoi anche selezionare più
+foto e video e usare **Aggiungi alla TV** oppure **Rimuovi dalla TV** nella barra
+delle azioni. La selezione è salvata nel database e condivisa fra i dispositivi;
+ricarica `/tv` sulla Fire Stick per vedere gli aggiornamenti. I contenuti nuovi
+sono esclusi dalla TV finché non li selezioni. I preferiti restano indipendenti.
+
+La vista usa le API e le regole di accesso esistenti e mostra solo contenuti pronti
+con **Mostra nella Galleria TV** attivo.
+Non include caricamento, modifica o gestione della libreria. I video usano la copia
+MP4 compatibile già preparata, quando disponibile, oppure il file originale;
+se il formato non è riproducibile, prepara **Video compatibile** dalla libreria sul
+computer e riapri il contenuto sulla TV. Senza database viene mostrata la galleria
+demo, in cui i video sono anteprime statiche e la selezione TV viene salvata solo
+nel browser usato per sceglierla, senza sincronizzazione con altri dispositivi.
+
+La navigazione può essere verificata anche da computer con frecce, Invio e Escape.
+La riproduzione e i tasti effettivamente inoltrati da Silk vanno verificati sulla
+Fire Stick utilizzata.
 
 ## Avvio rapido con Docker
 
@@ -104,15 +145,52 @@ flowchart LR
   F --> G["Libreria web reattiva"]
 ```
 
-Gli originali non vengono modificati. Ogni derivato è salvato in
+Gli originali non vengono modificati durante l'elaborazione. Ogni derivato è salvato in
 `storage/derived/<media-id>` e può essere rigenerato senza perdita.
+Con Docker, `FRAMEO_STORAGE_HOST_PATH` può puntare a una cartella assoluta su un
+disco esterno: in quel caso originali, derivati e configurazione della libreria
+vengono conservati lì invece che nel volume Docker sul disco di sistema.
 
-Una libreria host può essere montata in sola lettura con
+## Download da Telegram
+
+Apri **Download center** dalla barra laterale, inserisci `api_id` e `api_hash`
+creati su [my.telegram.org/apps](https://my.telegram.org/apps), quindi completa il
+login con il codice Telegram e l'eventuale password 2FA. Dopo il primo accesso la
+sessione resta nello storage privato di Frameo e non deve essere reinserita.
+
+La pagina accetta link a singoli messaggi `t.me`, inclusi gruppi e canali privati
+già accessibili all'account. I download interrotti restano come file `.part`,
+riprendono automaticamente al riavvio e, una volta completi, entrano nella stessa
+pipeline di indicizzazione degli upload manuali.
+
+## Download da una pagina web
+
+Nella stessa pagina, usa **Pagina web** e incolla l'URL pubblico di una pagina che
+contiene un video oppure il link diretto al file. Frameo usa `yt-dlp` per trovare
+e scaricare un singolo video, mostra l'avanzamento e lo aggiunge alla libreria.
+La coda riprende dopo un riavvio. Gli URL locali/privati sono rifiutati e la
+dimensione massima segue `MAX_UPLOAD_BYTES` (5 GB per impostazione predefinita).
+Il risultato dipende dal sito: non sono supportati video protetti da DRM o che
+richiedono cookie, accesso privato o abbonamenti.
+
+Per le cartelle pubbliche Gofile con un solo video, Frameo usa il normale
+pulsante di download del sito in un browser isolato, senza richiedere un account Premium.
+Per questa modalità il container può usare circa 400 MB di RAM aggiuntivi durante
+il trasferimento; si consiglia `FRAMEO_MEMORY_LIMIT=1024m` o superiore.
+
+Gli album pubblici Bunkr vengono suddivisi in download separati per ogni video
+supportato; sono accettati anche i link alle pagine dei singoli file Bunkr.
+Frameo usa l'URL video pubblico firmato dal player, con HTTPS e ripresa dei file
+parziali. Non disattiva la verifica TLS e non usa il link `dl.bunkr.cr` se il
+certificato non è valido.
+
+Una libreria host può essere montata in lettura/scrittura con
 `deploy/docker-compose.external.yml`. La pagina **Gestione libreria** permette di
 limitare la scansione a specifiche sottocartelle, vedere i conteggi reali
 dell'indice e avviare in background la generazione delle anteprime mancanti. Gli
-upload restano invece nello storage scrivibile gestito da Frameo, nella cartella
-relativa scelta dall'amministratore.
+upload restano nello storage gestito da Frameo, nella cartella relativa scelta
+dall'amministratore. Un amministratore può eliminare definitivamente un media:
+una conferma esplicita rimuove originale, derivati e record del catalogo.
 
 Gli screenshot estratti dai video diventano normali media della libreria: restano
 collegati al video e al timecode sorgente, ereditano persone, tag e gruppi e

@@ -17,9 +17,22 @@ deve installare Node.js, Prisma o compilare l'applicazione.
 
 5. Apri `http://localhost:3000`.
 
+## Archivio su disco esterno
+
+Per salvare sia gli originali caricati sia miniature e anteprime su un disco
+esterno, imposta in `.env` un percorso assoluto già montato e scrivibile:
+
+```dotenv
+FRAMEO_STORAGE_HOST_PATH=/mnt/disco-esterno/Frameo/storage
+```
+
+Poi ricrea il servizio con `docker compose up -d`. Se esiste già una libreria
+nel volume Docker predefinito, copiane prima il contenuto nella nuova cartella.
+Il database PostgreSQL resta separato e continua a usare il proprio volume.
+
 ## Libreria esterna
 
-Per indicizzare una cartella già esistente senza copiarla nel volume di Frameo,
+Per indicizzare e gestire una cartella già esistente senza copiarla nel volume di Frameo,
 imposta `EXTERNAL_MEDIA_HOST_PATH` nel file `.env` e avvia anche l'override:
 
 ```bash
@@ -29,8 +42,9 @@ docker compose \
   up -d
 ```
 
-La cartella host viene montata in sola lettura. Dalla pagina **Gestione
-libreria** puoi scegliere quali sottocartelle scansionare, avviare una nuova
+La cartella host viene montata in lettura/scrittura: l'eliminazione fisica,
+protetta da conferma esplicita e permessi amministratore, rimuove davvero gli
+originali. Dalla pagina **Gestione libreria** puoi scegliere quali sottocartelle scansionare, avviare una nuova
 scansione, cambiare la cartella relativa degli upload e generare o rigenerare le
 miniature e le clip di anteprima mancanti.
 

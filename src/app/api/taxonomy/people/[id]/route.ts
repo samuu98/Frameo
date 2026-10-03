@@ -11,7 +11,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const updateSchema = z.object({
-  imageIds: z.array(z.string().min(1)).max(12)
+  imageIds: z.array(z.string().min(1)).max(100),
+  coverImageId: z.string().min(1).nullable().optional(),
+  profileImageId: z.string().min(1).nullable().optional()
 });
 
 const streamUrl = (storagePath: string | null) =>
@@ -58,7 +60,10 @@ export async function GET(
   };
 
   const [person, total, images, selectedImages] = await Promise.all([
-    prisma.person.findUnique({ where: { id }, select: { id: true, name: true } }),
+    prisma.person.findUnique({
+      where: { id },
+      select: { id: true, name: true, coverMediaId: true, profileMediaId: true }
+    }),
     prisma.mediaAsset.count({ where }),
     prisma.mediaAsset.findMany({
       where,
@@ -96,6 +101,8 @@ export async function GET(
   return NextResponse.json({
     person,
     total,
+    coverImageId: person.coverMediaId,
+    profileImageId: person.profileMediaId,
     selectedIds: selectedImages.map(({ mediaId }) => mediaId),
     items: images.map((image) => ({
       id: image.id,
@@ -106,7 +113,9 @@ export async function GET(
       thumbnailUrl: streamUrl(image.thumbnailPath),
       previewUrl: streamUrl(image.previewPath),
       originalUrl: streamUrl(image.originalPath),
-      selected: image.personReferences.length > 0
+      selected: image.personReferences.length > 0,
+      isCover: image.id === person.coverMediaId,
+      isProfile: image.id === person.profileMediaId
     }))
   });
 }
@@ -133,6 +142,9 @@ export async function PATCH(
   }
   const { id } = await context.params;
   const imageIds = [...new Set(parsed.data.imageIds)];
+  const roleImageIds = [parsed.data.coverImageId, parsed.data.profileImageId]
+    .filter((imageId): imageId is string => Boolean(imageId));
+  const validatedImageIds = [...new Set([...imageIds, ...roleImageIds])];
   const [person, images] = await Promise.all([
     prisma.person.findUnique({ where: { id }, select: { id: true } }),
     prisma.mediaAsset.findMany({
@@ -140,7 +152,7 @@ export async function PATCH(
         AND: [
           buildAccessWhere(user),
           {
-            id: { in: imageIds },
+            id: { in: validatedImageIds },
             kind: MediaKind.IMAGE,
             people: { some: { personId: id } }
           }
@@ -152,7 +164,7 @@ export async function PATCH(
   if (!person) {
     return NextResponse.json({ error: "Persona non trovata" }, { status: 404 });
   }
-  if (images.length !== imageIds.length) {
+  if (images.length !== validatedImageIds.length) {
     return NextResponse.json(
       { error: "Una o più immagini non sono disponibili" },
       { status: 422 }
@@ -161,11 +173,22 @@ export async function PATCH(
   await prisma.person.update({
     where: { id },
     data: {
+      ...(parsed.data.coverImageId !== undefined
+        ? { coverMedia: parsed.data.coverImageId ? { connect: { id: parsed.data.coverImageId } } : { disconnect: true } }
+        : {}),
+      ...(parsed.data.profileImageId !== undefined
+        ? { profileMedia: parsed.data.profileImageId ? { connect: { id: parsed.data.profileImageId } } : { disconnect: true } }
+        : {}),
       referenceImages: {
         deleteMany: {},
         create: imageIds.map((mediaId, sortOrder) => ({ mediaId, sortOrder }))
       }
     }
   });
-  return NextResponse.json({ ok: true, imageIds });
+  return NextResponse.json({
+    ok: true,
+    imageIds,
+    coverImageId: parsed.data.coverImageId,
+    profileImageId: parsed.data.profileImageId
+  });
 }

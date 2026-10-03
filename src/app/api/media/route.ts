@@ -10,6 +10,8 @@ import { prisma } from "@/lib/prisma";
 import { registerDuplicateMatches } from "@/lib/duplicate-detector";
 import { getRequestUser, requireEditor } from "@/lib/access-control";
 import { buildMediaWhere } from "@/lib/media-filters";
+import { mediaOrderBy, orderByResolution, parseMediaSort } from "@/lib/media-sort";
+import { alternateGalleries } from "@/lib/gallery-order";
 import { mediaToJson } from "@/lib/media-json";
 import { enqueueMediaProcessing } from "@/lib/media-processor";
 import {
@@ -60,6 +62,42 @@ const includeRelations = {
   duplicateCandidates: true
 } as const;
 
+type DiscoveryItem = Awaited<ReturnType<typeof prisma.mediaAsset.findMany<{
+  include: typeof includeRelations;
+}>>>[number];
+
+/** Greedy, deterministico: premia prima performer e tag non ancora mostrati. */
+function mixForDiscovery(items: DiscoveryItem[]) {
+  const remaining = [...items];
+  const mixed: DiscoveryItem[] = [];
+  const seenPeople = new Set<string>();
+  const seenTags = new Set<string>();
+  const seenGroups = new Set<string>();
+  while (remaining.length) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const item = remaining[index];
+      const newPeople = item.people.filter(({ personId }) => !seenPeople.has(personId)).length;
+      const newTags = item.tags.filter(({ tagId }) => !seenTags.has(tagId)).length;
+      const newGroups = item.groups.filter(({ groupId }) => !seenGroups.has(groupId)).length;
+      const score = newPeople * 18 + newTags * 5 + newGroups * 4 +
+        (item.favorite ? 3 : 0) + Math.min(item.markers.length, 3) * 1.5 +
+        Math.min(item.rating, 5) * 0.5 - index * 0.002;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    const [next] = remaining.splice(bestIndex, 1);
+    mixed.push(next);
+    next.people.forEach(({ personId }) => seenPeople.add(personId));
+    next.tags.forEach(({ tagId }) => seenTags.add(tagId));
+    next.groups.forEach(({ groupId }) => seenGroups.add(groupId));
+  }
+  return mixed;
+}
+
 export async function GET(request: Request) {
   if (!process.env.DATABASE_URL || process.env.DEMO_MODE === "true") {
     return NextResponse.json({ items: [], mode: "demo" });
@@ -82,22 +120,112 @@ export async function GET(request: Request) {
     : (page - 1) * take;
   const user = await getRequestUser(request);
   const where = buildMediaWhere(url, user);
+  const sort = parseMediaSort(url.searchParams.get("sort"));
+  const orderBy = mediaOrderBy(sort);
+  const discovery = sort === "smart" && url.searchParams.get("discover") === "true";
+  const randomOrder = sort === "random";
+  const resolutionOrder = sort === "resolution-asc" || sort === "resolution-desc";
+  const randomVideos = url.searchParams.get("randomVideos") === "true";
+  const performerHome = url.searchParams.get("performerHome")?.trim();
+  const randomSeed =
+    url.searchParams.get("seed")?.trim().slice(0, 128) || randomUUID();
 
   const accessWhere = buildMediaWhere(
     new URL(`${url.origin}${url.pathname}`),
     user
   );
-  const orderBy =
-    url.searchParams.get("sort") === "name"
-      ? [{ title: "asc" as const }, { createdAt: "desc" as const }]
-      : [{ capturedAt: "desc" as const }, { createdAt: "desc" as const }];
-  const [items, total, imageCount, videoCount, uncataloguedCount] = await prisma.$transaction([
+
+  if (randomVideos || performerHome || randomOrder || resolutionOrder) {
+    const [eligible, imageCount, videoCount, uncataloguedCount] =
+      await prisma.$transaction([
+        prisma.mediaAsset.findMany({
+          where: {
+            AND: [
+              where,
+              ...(performerHome || randomVideos ? [{
+                kind: MediaKind.VIDEO,
+                hideFromRandomHome: false,
+                ...(performerHome ? { people: { some: { personId: performerHome } } } : {
+                  status: MediaStatus.READY,
+                  thumbnailPath: { not: null },
+                  previewPath: { not: null }
+                })
+              }] : [])
+            ]
+          },
+          orderBy,
+          select: { id: true, width: true, height: true, groups: { select: { groupId: true, group: { select: { ownerPersonId: true } } } } }
+        }),
+        prisma.mediaAsset.count({
+          where: { AND: [accessWhere, { kind: MediaKind.IMAGE }] }
+        }),
+        prisma.mediaAsset.count({
+          where: { AND: [accessWhere, { kind: MediaKind.VIDEO }] }
+        }),
+        prisma.mediaAsset.count({
+          where: {
+            AND: [
+              accessWhere,
+              {
+                people: { none: {} },
+                tags: { none: {} },
+                groups: { none: {} }
+              }
+            ]
+          }
+        })
+      ]);
+    const ordered = resolutionOrder
+      ? orderByResolution(eligible, sort as "resolution-asc" | "resolution-desc")
+      : randomOrder || (randomVideos && !performerHome)
+        ? eligible.map((item) => ({
+            ...item,
+            order: createHash("sha256").update(randomSeed).update(item.id).digest("hex")
+          })).sort((left, right) => left.order.localeCompare(right.order) || left.id.localeCompare(right.id))
+        : performerHome && sort === "smart"
+          ? alternateGalleries(eligible, (item) => {
+              const personal = item.groups.filter(({ group }) => group.ownerPersonId === performerHome);
+              return (personal.length ? personal : item.groups).map(({ groupId }) => groupId);
+            })
+          : eligible;
+    const selectedIds = ordered.slice(skip, skip + take).map(({ id }) => id);
+    const selected = selectedIds.length
+      ? await prisma.mediaAsset.findMany({
+          where: { id: { in: selectedIds } },
+          include: includeRelations
+        })
+      : [];
+    const selectedById = new Map(selected.map((item) => [item.id, item]));
+    const items = selectedIds
+      .map((id) => selectedById.get(id))
+      .filter((item): item is DiscoveryItem => Boolean(item));
+
+    return NextResponse.json({
+      items: items.map(mediaToJson),
+      total: eligible.length,
+      page,
+      pageSize: take,
+      pageCount: Math.max(1, Math.ceil(eligible.length / take)),
+      counts: {
+        all: imageCount + videoCount,
+        image: imageCount,
+        video: videoCount,
+        uncatalogued: uncataloguedCount
+      }
+    });
+  }
+
+  const discoverySkip = discovery && skip < 500 ? 0 : skip;
+  const discoveryTake = discovery
+    ? Math.min(600, Math.max(take * 6, skip - discoverySkip + take))
+    : take;
+  const [candidateItems, total, imageCount, videoCount, uncataloguedCount] = await prisma.$transaction([
     prisma.mediaAsset.findMany({
       where,
       include: includeRelations,
       orderBy,
-      take,
-      skip
+      take: discoveryTake,
+      skip: discoverySkip
     }),
     prisma.mediaAsset.count({ where }),
     prisma.mediaAsset.count({
@@ -119,6 +247,9 @@ export async function GET(request: Request) {
       }
     })
   ]);
+  const items = discovery
+    ? mixForDiscovery(candidateItems).slice(skip - discoverySkip, skip - discoverySkip + take)
+    : candidateItems;
 
   return NextResponse.json({
     items: items.map(mediaToJson),

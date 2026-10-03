@@ -23,7 +23,9 @@ services:
       NEXT_PUBLIC_APP_NAME: Frameo
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE_MB:-512}
     volumes:
-      - frameo_media:/app/storage
+      # Imposta FRAMEO_STORAGE_HOST_PATH a un percorso assoluto per conservare
+      # originali, anteprime e configurazione su un disco esterno.
+      - ${FRAMEO_STORAGE_HOST_PATH:-frameo_media}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy

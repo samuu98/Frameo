@@ -3,28 +3,70 @@
 import {
   Check,
   CopyCheck,
-  Eye,
   Files,
   RefreshCw,
   SearchCheck,
   ShieldAlert,
   Sparkles,
+  Trash2,
   X
 } from "lucide-react";
 import { useEffect, useState } from "react";
+
+interface DuplicateMedia {
+  id: string;
+  title: string;
+  kind: string;
+  bytes?: string;
+  thumbnailUrl?: string | null;
+  people?: { person: { name: string } }[];
+  tags?: { tag: { name: string } }[];
+}
+
+function fileSize(bytes?: string) {
+  if (bytes === undefined) return "Dimensione non disponibile";
+  const value = Number(bytes);
+  const unit = value >= 1024 ** 3 ? 3 : value >= 1024 ** 2 ? 2 : value >= 1024 ? 1 : 0;
+  return `${(value / 1024 ** unit).toLocaleString("it-IT", { maximumFractionDigits: 2 })} ${["B", "KiB", "MiB", "GiB"][unit]}`;
+}
 
 interface DuplicateMatch {
   id: string;
   similarity: number;
   reason: string;
   status: string;
-  source: { id: string; title: string; kind: string; thumbnailUrl?: string | null };
-  candidate: { id: string; title: string; kind: string; thumbnailUrl?: string | null };
+  source: DuplicateMedia;
+  candidate: DuplicateMedia;
 }
 
 export function DuplicatesPanel() {
   const [matches, setMatches] = useState<DuplicateMatch[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DuplicateMedia | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const deleteFile = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setNotice("");
+    try {
+      const response = await fetch(`/api/media/${deleteTarget.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Eliminazione non riuscita");
+      setMatches((current) => current.filter((match) => match.source.id !== deleteTarget.id && match.candidate.id !== deleteTarget.id));
+      setNotice(`Eliminato dal disco: ${deleteTarget.title}`);
+      setDeleteTarget(null);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Eliminazione non riuscita");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const refresh = () => {
     void fetch("/api/duplicates")
@@ -43,6 +85,21 @@ export function DuplicatesPanel() {
 
   return (
     <section className="duplicates-panel">
+      {notice ? <p role="status">{notice}</p> : null}
+      {deleteTarget ? (
+        <div className="delete-media-backdrop" onKeyDown={(event) => { if (event.key === "Escape" && !deleting) setDeleteTarget(null); }}>
+          <section className="delete-media-dialog" role="dialog" aria-modal="true" aria-labelledby="duplicate-delete-title">
+            <span><Trash2 size={22} /></span>
+            <h2 id="duplicate-delete-title">Eliminare “{deleteTarget.title}”?</h2>
+            <p>{fileSize(deleteTarget.bytes)} · Il file originale e le sue anteprime verranno eliminati definitivamente dal disco. L’azione non è annullabile.</p>
+            {notice ? <p role="alert">{notice}</p> : null}
+            <footer>
+              <button autoFocus disabled={deleting} onClick={() => setDeleteTarget(null)}>Annulla</button>
+              <button className="danger" disabled={deleting} onClick={() => void deleteFile()}>{deleting ? "Eliminazione…" : "Elimina definitivamente"}</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
       <div className="management-hero">
         <div><span><CopyCheck size={15} /> QUALITÀ ARCHIVIO</span><h2>Possibili duplicati</h2><p>Confronto SHA-256 e impronta percettiva per immagini e fotogrammi video.</p></div>
         <button onClick={() => {
@@ -63,8 +120,8 @@ export function DuplicatesPanel() {
               {[match.source, match.candidate].map((media, index) => (
                 <div key={media.id}>
                   <span className="duplicate-preview">{media.thumbnailUrl ? <img src={media.thumbnailUrl} alt="" /> : <CopyCheck size={27} />}</span>
-                  <p><em>{index === 0 ? "ORIGINALE SUGGERITO" : "POSSIBILE COPIA"}</em><strong>{media.title}</strong><small>{media.kind === "VIDEO" ? "Video" : "Immagine"} · archivio gestito</small></p>
-                  <button><Eye size={14} /> Confronta</button>
+                  <p><em>{index === 0 ? "ORIGINALE SUGGERITO" : "POSSIBILE COPIA"}</em><strong>{media.title}</strong><small>{media.kind === "VIDEO" ? "Video" : "Immagine"} · {fileSize(media.bytes)}</small><small>Performer: {media.people?.map(({ person }) => person.name).join(", ") || "Nessuno"}</small><small>Tag: {media.tags?.map(({ tag }) => tag.name).join(", ") || "Nessuno"}</small></p>
+                  <button aria-label={`Elimina ${media.title}`} onClick={() => { setNotice(""); setDeleteTarget(media); }}><Trash2 size={14} /> Elimina file</button>
                 </div>
               ))}
               <i className="compare-divider">VS</i>

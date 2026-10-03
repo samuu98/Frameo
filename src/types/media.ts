@@ -33,8 +33,11 @@ export interface MediaItem {
   people: string[];
   tags: string[];
   group: string;
+  galleries?: Array<{ name: string; ownerPersonId?: string | null }>;
   status: MediaStatus;
   favorite?: boolean;
+  showOnTv?: boolean;
+  hideFromRandomHome?: boolean;
   featured?: boolean;
   markers?: HighlightMarker[];
   duplicateCount?: number;
@@ -73,6 +76,8 @@ export interface PersistedMediaRecord {
   createdAt: string;
   dominantColor: string | null;
   favorite: boolean;
+  showOnTv: boolean;
+  hideFromRandomHome: boolean;
   thumbnailUrl: string | null;
   previewUrl: string | null;
   originalUrl: string;
@@ -85,7 +90,7 @@ export interface PersistedMediaRecord {
   duplicateCount?: number;
   tags: Array<{ name: string }>;
   people: Array<{ name: string }>;
-  groups: Array<{ name: string }>;
+  groups: Array<{ name: string; ownerPersonId?: string | null }>;
 }
 
 export interface AdvancedFilterState {

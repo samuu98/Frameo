@@ -1,0 +1,33 @@
+.tv-gallery { min-height: 100vh; padding: 4vh 5vw; background: #11131a; color: #f6f7fb; font-size: clamp(18px, 1.6vw, 28px); }
+.tv-gallery button { color: inherit; background: #262b38; border: 2px solid #444b60; border-radius: 12px; padding: 14px 24px; font: inherit; cursor: pointer; }
+.tv-gallery button:focus { outline: 4px solid #c0b5ff; outline-offset: 5px; background: #45406b; }
+.tv-gallery button:hover { border-color: #c0b5ff; }
+.tv-gallery button:disabled { opacity: .35; cursor: default; }
+.tv-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.tv-brand { font-size: .7em; font-weight: 800; letter-spacing: .2em; color: #c0b5ff; }
+.tv-brand b { margin-left: 8px; padding: 4px 8px; border: 1px solid #77718e; border-radius: 5px; }
+.tv-header h1 { font-size: 2em; margin: 14px 0 0; line-height: 1.2; }
+.tv-header p { color: #b3b9cb; font-size: .8em; line-height: 1.8; }
+.tv-filters { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 24px; }
+.tv-filters button[aria-pressed="true"] { background: #6653c2; border-color: #b3a6ff; }
+.tv-summary { margin: 20px 0; color: #b3b9cb; font-size: .85em; }
+.tv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+.tv-gallery .tv-card { padding: 0; overflow: hidden; text-align: left; min-width: 0; }
+.tv-thumbnail { aspect-ratio: 16 / 10; position: relative; background: #1b1e29; }
+.tv-thumbnail img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tv-badge { position: absolute; bottom: 12px; left: 12px; background: #11131ae6; border-radius: 6px; padding: 6px 10px; font-size: .7em; }
+.tv-card strong { display: block; padding: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9em; }
+.tv-placeholder { display: grid; height: 100%; place-items: center; font-size: 2em; color: #b3b9cb; }
+.tv-message { min-height: 32vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #b3b9cb; gap: 20px; text-align: center; }
+.tv-pagination { display: flex; justify-content: space-between; gap: 20px; margin: 32px 0 12px; }
+.tv-viewer { position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column; padding: 4vh 5vw; background: #08090d; }
+.tv-viewer > header { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.tv-viewer h2 { font-size: 1.2em; margin: 0; overflow-wrap: anywhere; }
+.tv-viewer header p { color: #b3b9cb; font-size: .75em; margin: 8px 0; }
+.tv-stage { flex: 1; min-height: 0; position: relative; margin: 16px 0; display: flex; align-items: center; justify-content: center; }
+.tv-stage > img, .tv-stage > video { width: 100%; height: 100%; object-fit: contain; }
+.tv-controls { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; }
+.tv-controls span { font-size: .8em; color: #b3b9cb; }
+.tv-player-error { position: absolute; bottom: 16px; left: 5%; right: 5%; padding: 20px; background: #391e28; border: 1px solid #a5677d; border-radius: 10px; text-align: center; font-size: .85em; }
+@media (max-width: 900px) { .tv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; } .tv-controls { gap: 14px; } .tv-controls button { padding: 12px 16px; } }
+@media (max-width: 600px) { .tv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tv-header { align-items: flex-start; flex-direction: column; } .tv-header p { margin: 0; } .tv-gallery button { padding: 12px 16px; } }

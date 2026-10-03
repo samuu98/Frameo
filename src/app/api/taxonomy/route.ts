@@ -27,6 +27,12 @@ export async function GET() {
         id: true,
         name: true,
         _count: { select: { media: true } },
+        coverMedia: {
+          select: { id: true, title: true, thumbnailPath: true, previewPath: true, originalPath: true }
+        },
+        profileMedia: {
+          select: { id: true, title: true, thumbnailPath: true, previewPath: true, originalPath: true }
+        },
         referenceImages: {
           orderBy: { sortOrder: "asc" },
           select: {
@@ -45,44 +51,80 @@ export async function GET() {
       orderBy: { name: "asc" }
     }),
     prisma.tag.findMany({
-      select: { id: true, name: true, color: true, _count: { select: { media: true } } },
+      select: {
+        id: true,
+        name: true,
+        color: true,
+        _count: { select: { media: true } },
+        media: {
+          take: 4,
+          orderBy: { media: { createdAt: "desc" } },
+          select: {
+            media: { select: { id: true, title: true, thumbnailPath: true, previewPath: true, originalPath: true } }
+          }
+        }
+      },
       orderBy: { name: "asc" }
     }),
     prisma.group.findMany({
+      where: { ownerPersonId: null },
       select: {
         id: true,
         name: true,
         accent: true,
-        _count: { select: { media: true } }
+        _count: { select: { media: true } },
+        media: {
+          take: 4,
+          orderBy: { sortOrder: "asc" },
+          select: {
+            media: { select: { id: true, title: true, thumbnailPath: true, previewPath: true, originalPath: true } }
+          }
+        }
       },
       orderBy: { name: "asc" }
     })
   ]);
   return NextResponse.json({
-    people: people.map(({ _count, referenceImages, ...person }) => ({
+    people: people.map(({ _count, referenceImages, coverMedia, profileMedia, ...person }) => {
+      const orderedMedia = [profileMedia, coverMedia, ...referenceImages.map(({ media }) => media)]
+        .filter((media): media is NonNullable<typeof media> => Boolean(media))
+        .filter((media, index, all) => all.findIndex(({ id }) => id === media.id) === index);
+      return {
       ...person,
       count: _count.media,
-      images: referenceImages.map(({ media }) => ({
+      coverImageId: coverMedia?.id ?? null,
+      profileImageId: profileMedia?.id ?? null,
+      images: orderedMedia.map((media) => ({
         mediaId: media.id,
         title: media.title,
         url: streamUrl(
           media.thumbnailPath ?? media.previewPath ?? media.originalPath
         )
       }))
-    })),
-    tags: tags.map(({ _count, ...tag }) => ({
+    }}),
+    tags: tags.map(({ _count, media, ...tag }) => ({
       ...tag,
-      count: _count.media
+      count: _count.media,
+      images: media.map(({ media: item }) => ({
+        mediaId: item.id,
+        title: item.title,
+        url: streamUrl(item.thumbnailPath ?? item.previewPath ?? item.originalPath)
+      }))
     })),
-    groups: groups.map(({ _count, ...group }) => ({
+    groups: groups.map(({ _count, media, ...group }) => ({
       ...group,
-      count: _count.media
+      count: _count.media,
+      images: media.map(({ media: item }) => ({
+        mediaId: item.id,
+        title: item.title,
+        url: streamUrl(item.thumbnailPath ?? item.previewPath ?? item.originalPath)
+      }))
     }))
   });
 }
 
 const createTaxonomySchema = z.object({
-  kind: z.enum(["PERSON", "TAG"]),
+  kind: z.enum(["PERSON", "TAG", "GROUP"]),
   name: z.string().trim().min(1).max(64),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
 });
@@ -109,6 +151,17 @@ export async function POST(request: Request) {
       create: { name: parsed.data.name }
     });
     return NextResponse.json({ entry: { ...person, count: 0 } }, { status: 201 });
+  }
+
+  if (parsed.data.kind === "GROUP") {
+    const group = await prisma.group.upsert({
+      where: { name: parsed.data.name },
+      update: parsed.data.color ? { accent: parsed.data.color } : {},
+      create: { name: parsed.data.name, accent: parsed.data.color ?? "#F97316" },
+      include: { _count: { select: { media: true } } }
+    });
+    const { _count, ...entry } = group;
+    return NextResponse.json({ entry: { ...entry, count: _count.media, color: group.accent } }, { status: 201 });
   }
 
   const tag = await prisma.tag.upsert({

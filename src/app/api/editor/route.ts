@@ -108,5 +108,13 @@ export async function GET(request: Request) {
     orderBy: { createdAt: "desc" },
     take: 50
   });
-  return NextResponse.json({ projects });
+  const outputs = await prisma.mediaAsset.findMany({
+    where: { AND: [buildAccessWhere(user), { directoryKey: { in: projects.map(({ id }) => `edited/${id}`) } }] },
+    select: { id: true, title: true, status: true, directoryKey: true },
+    orderBy: { title: "asc" }
+  });
+  return NextResponse.json({ projects: projects.map((project) => ({
+    ...project,
+    outputs: outputs.filter((output) => output.directoryKey === `edited/${project.id}`)
+  })) });
 }

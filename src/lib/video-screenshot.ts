@@ -4,7 +4,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { MediaKind, MediaStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { processMediaAsset } from "@/lib/media-processor";
+import { enqueueMediaProcessing } from "@/lib/media-processor";
 
 const storageRoot = path.resolve(
   process.env.STORAGE_ROOT ??
@@ -85,10 +85,11 @@ export async function captureVideoScreenshot(
       "-loglevel",
       "error",
       "-y",
-      "-i",
-      inputPath,
+      // Input seeking evita di decodificare tutto il video fino al timecode.
       "-ss",
       (boundedTimestamp / 1000).toFixed(6),
+      "-i",
+      inputPath,
       "-map",
       "0:v:0",
       "-frames:v",
@@ -141,7 +142,7 @@ export async function captureVideoScreenshot(
     throw error;
   }
 
-  await processMediaAsset(screenshotId).catch((error) => {
+  void enqueueMediaProcessing(screenshotId).catch((error) => {
     console.error(`Screenshot processing failed for media ${screenshotId}`, error);
   });
   return screenshotId;

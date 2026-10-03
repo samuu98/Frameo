@@ -38,7 +38,7 @@ export function HighlightsPlayer({
   onClose: () => void;
   onOpenSource: (item: MediaItem) => void;
 }) {
-  const queue = useMemo<HighlightQueueItem[]>(
+  const localQueue = useMemo<HighlightQueueItem[]>(
     () =>
       items
         .filter((item) => item.type === "video")
@@ -49,6 +49,8 @@ export function HighlightsPlayer({
         ),
     [items]
   );
+  const [queue, setQueue] = useState<HighlightQueueItem[]>(localQueue);
+  const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
@@ -56,6 +58,62 @@ export function HighlightsPlayer({
   const [loop, setLoop] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const current = queue[index];
+
+  useEffect(() => {
+    const params = new URLSearchParams({ take: "300" });
+    filters.people.forEach((value) => params.append("person", value));
+    filters.excludePeople.forEach((value) => params.append("excludePerson", value));
+    filters.tags.forEach((value) => params.append("tag", value));
+    filters.excludeTags.forEach((value) => params.append("excludeTag", value));
+    filters.groups.forEach((value) => params.append("group", value));
+    filters.excludeGroups.forEach((value) => params.append("excludeGroup", value));
+    let active = true;
+    setLoading(true);
+    void fetch(`/api/highlights?${params.toString()}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { highlights?: Array<{
+        id: string; label: string; startMs: number; endMs: number; color: string; featured?: boolean;
+        media: {
+          id: string; title: string; kind: "VIDEO" | "IMAGE"; durationMs: number | null;
+          width: number | null; height: number | null; bytes: string; dominantColor: string | null;
+          favorite: boolean; createdAt: string; sourceUrl: string; previewUrl: string | null;
+          posterUrl: string | null; people: Array<{ name: string }>;
+          tags: Array<{ name: string }>; groups: Array<{ name: string }>;
+        };
+      }>; mode?: string } | null) => {
+        if (!active || !payload || payload.mode === "demo") return;
+        const globalQueue = (payload.highlights ?? []).map(({ media, ...marker }) => ({
+          marker,
+          media: {
+            id: media.id,
+            title: media.title,
+            type: "video" as const,
+            src: media.posterUrl ?? media.previewUrl ?? media.sourceUrl,
+            thumbnailUrl: media.posterUrl,
+            previewUrl: media.previewUrl,
+            originalUrl: media.sourceUrl,
+            accent: media.dominantColor ?? "#181816",
+            duration: media.durationMs ? formatTime(media.durationMs) : undefined,
+            durationMs: media.durationMs,
+            dimensions: media.width && media.height ? `${media.width} × ${media.height}` : "Video",
+            size: media.bytes,
+            date: media.createdAt,
+            people: media.people.map(({ name }) => name),
+            tags: media.tags.map(({ name }) => name),
+            group: media.groups[0]?.name ?? "Da catalogare",
+            status: "ready" as const,
+            favorite: media.favorite,
+            markers: [marker],
+            aspect: "landscape" as const
+          }
+        }));
+        setQueue(globalQueue);
+        setIndex(0);
+      })
+      .catch(() => undefined)
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [filters, localQueue]);
 
   const move = (direction: 1 | -1) => {
     if (!queue.length) return;
@@ -111,8 +169,8 @@ export function HighlightsPlayer({
       <div className="highlights-backdrop">
         <section className="highlights-empty">
           <span><Sparkles size={23} /></span>
-          <h2>Nessun momento saliente in questa vista.</h2>
-          <p>Aggiungi un marker a un video oppure allarga i filtri applicati.</p>
+          <h2>{loading ? "Sto preparando i momenti salienti…" : "Nessun momento saliente disponibile."}</h2>
+          <p>{loading ? "Cerco nell’intera libreria, non soltanto nella pagina aperta." : "Aggiungi un marker a un video oppure allarga i filtri applicati."}</p>
           <button onClick={onClose}>Torna alla libreria</button>
         </section>
       </div>

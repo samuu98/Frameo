@@ -27,6 +27,8 @@ interface PersonImageOption {
   previewUrl: string | null;
   originalUrl: string | null;
   selected: boolean;
+  isCover: boolean;
+  isProfile: boolean;
 }
 
 interface PersonReferenceModalProps {
@@ -97,12 +99,15 @@ export function PersonReferenceModal({
   const [focusedId, setFocusedId] = useState<string | null>(
     person.images?.[0]?.mediaId ?? null
   );
+  const [coverId, setCoverId] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectionLoaded = useRef(false);
+  const rolesLoaded = useRef(false);
 
   const load = useCallback(async (skip: number, append: boolean) => {
     append ? setLoadingMore(true) : setLoading(true);
@@ -116,6 +121,8 @@ export function PersonReferenceModal({
         items?: PersonImageOption[];
         total?: number;
         selectedIds?: string[];
+        coverImageId?: string | null;
+        profileImageId?: string | null;
         error?: string;
       } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Ricerca non riuscita");
@@ -135,6 +142,11 @@ export function PersonReferenceModal({
         selectionLoaded.current = true;
         return next;
       });
+      if (!rolesLoaded.current) {
+        setCoverId(payload?.coverImageId ?? items.find(({ isCover }) => isCover)?.id ?? null);
+        setProfileId(payload?.profileImageId ?? items.find(({ isProfile }) => isProfile)?.id ?? null);
+        rolesLoaded.current = true;
+      }
       setFocusedId((current) => current ?? items[0]?.id ?? null);
       setError(null);
     } catch (reason) {
@@ -155,10 +167,20 @@ export function PersonReferenceModal({
   const toggle = (id: string) => {
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
+      if (next.has(id)) {
+        next.delete(id);
+        if (coverId === id) setCoverId(null);
+        if (profileId === id) setProfileId(null);
+      }
       else if (next.size < 12) next.add(id);
       return next;
     });
+  };
+
+  const setRole = (role: "cover" | "profile", id: string) => {
+    setSelected((current) => new Set([...current, id]));
+    if (role === "cover") setCoverId(id);
+    else setProfileId(id);
   };
 
   const save = async () => {
@@ -168,7 +190,11 @@ export function PersonReferenceModal({
       const response = await fetch(`/api/taxonomy/people/${person.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageIds: [...selected] })
+        body: JSON.stringify({
+          imageIds: [...new Set([...selected, ...(coverId ? [coverId] : []), ...(profileId ? [profileId] : [])])],
+          coverImageId: coverId,
+          profileImageId: profileId
+        })
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Salvataggio non riuscito");
@@ -196,8 +222,7 @@ export function PersonReferenceModal({
             <small>FOTO PERFORMER</small>
             <h2 id="person-reference-title">{person.name}</h2>
             <p>
-              Sono mostrate esclusivamente le foto già associate a questo performer.
-              Scegline fino a 12 per la sua scheda.
+              Scegli chiaramente una copertina, una foto profilo e le immagini secondarie della scheda.
             </p>
           </div>
           <button onClick={onClose} aria-label="Chiudi"><X size={18} /></button>
@@ -218,6 +243,18 @@ export function PersonReferenceModal({
                       : "Dimensioni non disponibili"}
                   </small>
                 </p>
+                <div className="person-reference-role-actions">
+                  <button className={coverId === focused.id ? "is-active" : ""} onClick={() => setRole("cover", focused.id)}>
+                    <ImagePlus size={15} />
+                    <span><strong>Copertina</strong><small>{coverId === focused.id ? "Selezionata" : "Usa come sfondo grande"}</small></span>
+                    {coverId === focused.id ? <Check size={15} /> : null}
+                  </button>
+                  <button className={profileId === focused.id ? "is-active" : ""} onClick={() => setRole("profile", focused.id)}>
+                    <UserRound size={15} />
+                    <span><strong>Foto profilo</strong><small>{profileId === focused.id ? "Selezionata" : "Usa come ritratto"}</small></span>
+                    {profileId === focused.id ? <Check size={15} /> : null}
+                  </button>
+                </div>
                 <button
                   className={selected.has(focused.id) ? "is-selected" : ""}
                   onClick={() => toggle(focused.id)}
@@ -269,6 +306,12 @@ export function PersonReferenceModal({
                     >
                       <ReliablePersonImage image={image} alt={image.title} />
                       <small>{image.title}</small>
+                      {coverId === image.id || profileId === image.id ? (
+                        <span className="person-image-role-badges">
+                          {coverId === image.id ? <b>COPERTINA</b> : null}
+                          {profileId === image.id ? <b>PROFILO</b> : null}
+                        </span>
+                      ) : null}
                     </button>
                     <button
                       type="button"
@@ -312,7 +355,7 @@ export function PersonReferenceModal({
 
         <footer>
           <p className={error ? "is-error" : ""}>
-            {error ?? `${selected.size} immagini selezionate per ${person.name}`}
+            {error ?? `${selected.size} immagini · ${coverId ? "copertina scelta" : "copertina da scegliere"} · ${profileId ? "profilo scelto" : "profilo da scegliere"}`}
           </p>
           <div>
             <button onClick={onClose}>Annulla</button>

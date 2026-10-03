@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const markerSchema = z.object({
-  label: z.string().trim().min(1).max(100),
+  label: z.string().trim().max(100).optional().default(""),
   startMs: z.number().int().min(0),
   endMs: z.number().int().positive(),
   color: z.string().regex(/^#[0-9a-f]{6}$/i).default("#6D5DFB"),
@@ -75,7 +75,12 @@ export async function POST(
     return NextResponse.json({ error: "Il marker supera la durata del video" }, { status: 422 });
   }
   const marker = await prisma.highlightMarker.create({
-    data: { mediaId: id, createdById: user?.id, ...parsed.data }
+    data: {
+      mediaId: id,
+      createdById: user?.id,
+      ...parsed.data,
+      label: parsed.data.label || `Momento ${Math.floor(parsed.data.startMs / 60000)}:${String(Math.floor(parsed.data.startMs / 1000) % 60).padStart(2, "0")}`
+    }
   });
   return NextResponse.json({ marker }, { status: 201 });
 }

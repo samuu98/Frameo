@@ -29,7 +29,10 @@ export async function GET(
     },
     select: {
       tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
-      groups: { select: { group: { select: { id: true, name: true, accent: true } } } }
+      groups: {
+        where: { group: { ownerPersonId: null } },
+        select: { group: { select: { id: true, name: true, accent: true } } }
+      }
     }
   });
   const tags = new Map<string, { id: string; name: string; color: string; count: number }>();

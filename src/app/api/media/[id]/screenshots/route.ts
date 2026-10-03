@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 const captureSchema = z.object({
   timestampMs: z.number().int().min(0),
-  title: z.string().trim().min(1).max(180).optional()
+  title: z.string().trim().max(180).optional()
 });
 
 const includeRelations = {

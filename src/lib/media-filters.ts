@@ -49,6 +49,7 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   const duplicateOnly = url.searchParams.get("duplicateOnly") === "true";
   const favorite = url.searchParams.get("favorite");
   const uncatalogued = url.searchParams.get("uncatalogued") === "true";
+  const excludePerformerGallery = url.searchParams.get("excludePerformerGallery")?.trim();
 
   const filters: Prisma.MediaAssetWhereInput[] = [buildAccessWhere(user)];
   if (kind === "video") filters.push({ kind: MediaKind.VIDEO });
@@ -56,11 +57,17 @@ export function buildMediaWhere(url: URL, user: RequestUser | null) {
   if (statuses.length) filters.push({ status: { in: statuses } });
   if (favorite === "true") filters.push({ favorite: true });
   if (favorite === "false") filters.push({ favorite: false });
+  if (url.searchParams.get("tv") === "true") filters.push({ showOnTv: true });
   if (uncatalogued) {
     filters.push({
       people: { none: {} },
       tags: { none: {} },
       groups: { none: {} }
+    });
+  }
+  if (excludePerformerGallery) {
+    filters.push({
+      groups: { none: { group: { ownerPersonId: excludePerformerGallery } } }
     });
   }
 

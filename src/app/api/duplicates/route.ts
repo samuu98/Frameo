@@ -41,6 +41,8 @@ export async function GET(request: Request) {
             title: true,
             kind: true,
             bytes: true,
+            people: { select: { person: { select: { name: true } } } },
+            tags: { select: { tag: { select: { name: true } } } },
             thumbnailPath: true,
             originalPath: true
           }
@@ -51,6 +53,8 @@ export async function GET(request: Request) {
             title: true,
             kind: true,
             bytes: true,
+            people: { select: { person: { select: { name: true } } } },
+            tags: { select: { tag: { select: { name: true } } } },
             thumbnailPath: true,
             originalPath: true
           }

@@ -1,4 +1,6 @@
-import { MediaStatus, Prisma } from "@prisma/client";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
@@ -12,10 +14,25 @@ import { mediaToJson } from "@/lib/media-json";
 
 export const runtime = "nodejs";
 
+const storageRoot = path.resolve(
+  process.env.STORAGE_ROOT ??
+    path.join(/* turbopackIgnore: true */ process.cwd(), "storage")
+);
+
+const managedPath = (storagePath: string) => {
+  const resolved = path.resolve(storageRoot, storagePath);
+  if (resolved !== storageRoot && !resolved.startsWith(`${storageRoot}${path.sep}`)) {
+    throw new Error("Percorso del media non valido");
+  }
+  return resolved;
+};
+
 const updateSchema = z.object({
   title: z.string().trim().min(1).max(180).optional(),
   description: z.string().trim().max(4000).nullable().optional(),
   favorite: z.boolean().optional(),
+  showOnTv: z.boolean().optional(),
+  hideFromRandomHome: z.boolean().optional(),
   rating: z.number().int().min(0).max(5).optional(),
   capturedAt: z.iso.datetime().nullable().optional(),
   tagNames: z.array(z.string().trim().min(1).max(64)).max(40).optional(),
@@ -80,6 +97,29 @@ export async function PATCH(
   if (!accessible) return NextResponse.json({ error: "Media non trovato" }, { status: 404 });
 
   const { tagNames, personNames, personIds, groupIds, capturedAt, ...fields } = parsed.data;
+  let replacedGroupIds: string[] = [];
+  if (groupIds) {
+    const requestedGroups = await prisma.group.findMany({
+      where: { id: { in: groupIds } },
+      select: { id: true, ownerPersonId: true }
+    });
+    if (requestedGroups.length !== new Set(groupIds).size) {
+      return NextResponse.json({ error: "Galleria non trovata" }, { status: 404 });
+    }
+    const ownerScopes = new Set(requestedGroups.map(({ ownerPersonId }) => ownerPersonId ?? "global"));
+    if (ownerScopes.size !== 1) {
+      return NextResponse.json({ error: "Seleziona gallerie dello stesso ambito" }, { status: 422 });
+    }
+    const ownerPersonId = requestedGroups[0]?.ownerPersonId ?? null;
+    const currentGroups = await prisma.groupMedia.findMany({
+      where: {
+        mediaId: id,
+        group: ownerPersonId === null ? { ownerPersonId: null } : { ownerPersonId }
+      },
+      select: { groupId: true }
+    });
+    replacedGroupIds = currentGroups.map(({ groupId }) => groupId);
+  }
   const update: Prisma.MediaAssetUpdateInput = {
     ...fields,
     capturedAt: capturedAt === null ? null : capturedAt ? new Date(capturedAt) : undefined
@@ -118,7 +158,7 @@ export async function PATCH(
   }
   if (groupIds) {
     update.groups = {
-      deleteMany: {},
+      deleteMany: { groupId: { in: replacedGroupIds } },
       create: groupIds.map((groupId, sortOrder) => ({
         sortOrder,
         group: { connect: { id: groupId } }
@@ -154,9 +194,54 @@ export async function DELETE(
     return NextResponse.json({ error: "Permessi amministratore richiesti" }, { status: 403 });
   }
   const { id } = await context.params;
-  await prisma.mediaAsset.update({
+  const confirmation = request.headers.get("content-type")?.includes("application/json")
+    ? await request.json().catch(() => null) as { confirm?: boolean } | null
+    : null;
+  if (confirmation?.confirm !== true) {
+    return NextResponse.json(
+      { error: "Conferma esplicita richiesta per eliminare il file dal disco" },
+      { status: 422 }
+    );
+  }
+  const media = await prisma.mediaAsset.findUnique({
     where: { id },
-    data: { status: MediaStatus.ERROR, description: "Marked for deletion" }
+    select: {
+      id: true,
+      originalPath: true,
+      thumbnailPath: true,
+      previewPath: true,
+      streamPath: true,
+      directoryKey: true
+    }
   });
-  return NextResponse.json({ ok: true });
+  if (!media) return NextResponse.json({ error: "Media non trovato" }, { status: 404 });
+
+  const targets = new Set<string>([
+    media.originalPath,
+    media.thumbnailPath,
+    media.previewPath,
+    media.streamPath
+  ].filter((value): value is string => Boolean(value)));
+  // Gli output derivati appartengono sempre in modo esclusivo al media.
+  targets.add(`derived/${media.id}`);
+  // Upload e screenshot hanno una cartella originale esclusiva con nome uguale all'id.
+  const originalParent = path.posix.dirname(media.originalPath);
+  if (path.posix.basename(originalParent) === media.id) targets.add(originalParent);
+
+  const failures: string[] = [];
+  for (const target of [...targets].sort((left, right) => right.length - left.length)) {
+    try {
+      await rm(managedPath(target), { recursive: true, force: true });
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (failures.length) {
+    return NextResponse.json(
+      { error: "Impossibile eliminare tutti i file fisici", details: failures.slice(0, 5) },
+      { status: 500 }
+    );
+  }
+  await prisma.mediaAsset.delete({ where: { id } });
+  return NextResponse.json({ ok: true, deletedFromDisk: true });
 }

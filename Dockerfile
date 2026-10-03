@@ -21,13 +21,20 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-RUN apk add --no-cache ffmpeg tini
+RUN apk add --no-cache ffmpeg tini python3 py3-pip chromium \
+    && python3 -m venv /opt/telegram-auth \
+    && /opt/telegram-auth/bin/pip install --no-cache-dir telethon==1.42.0 yt-dlp==2026.8.19
 COPY --from=runtime-tools /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/node_modules/@img ./node_modules/@img
+COPY --from=builder /app/node_modules/playwright-core ./node_modules/playwright-core
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/scripts/telegram_auth.py ./scripts/telegram_auth.py
+COPY --from=builder /app/scripts/web_download.py ./scripts/web_download.py
+COPY --from=builder /app/scripts/gofile_download.mjs ./scripts/gofile_download.mjs
+COPY --from=builder /app/scripts/bunkr_download.py ./scripts/bunkr_download.py
 COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN ln -s ../lib/node_modules/prisma/build/index.js /usr/local/bin/prisma \
     && ln -s ../lib/node_modules/tsx/dist/cli.mjs /usr/local/bin/tsx \

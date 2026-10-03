@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     ),
     prisma.group.findMany({
       where: { id: { in: groupIds } },
-      select: { id: true }
+      select: { id: true, ownerPersonId: true }
     })
   ]);
   if (groups.length !== groupIds.length) {
@@ -77,6 +77,25 @@ export async function POST(request: Request) {
       { error: "Uno o più gruppi non sono disponibili" },
       { status: 422 }
     );
+  }
+  const performerGalleryPersonIds = [...new Set(groups.flatMap(({ ownerPersonId }) =>
+    ownerPersonId ? [ownerPersonId] : []
+  ))];
+  if (performerGalleryPersonIds.length) {
+    const eligibleCounts = await Promise.all(
+      performerGalleryPersonIds.map((personId) => prisma.mediaAsset.count({
+        where: {
+          id: { in: accessibleIds },
+          people: { some: { personId } }
+        }
+      }))
+    );
+    if (eligibleCounts.some((count) => count !== accessibleIds.length)) {
+      return NextResponse.json(
+        { error: "Una galleria performer può contenere soltanto media di quel performer" },
+        { status: 422 }
+      );
+    }
   }
 
   await prisma.$transaction([

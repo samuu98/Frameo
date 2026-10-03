@@ -146,6 +146,7 @@ async function processVideo(
   inputPath: string,
   outputDir: string
 ) {
+  const existingStreamPath = (await prisma.mediaAsset.findUnique({ where: { id: mediaId }, select: { streamPath: true } }))?.streamPath;
   await updateJobPhase(jobId, "video:analyze", 8);
   const probeOutput = await run("ffprobe", [
     "-v",
@@ -241,11 +242,29 @@ async function processVideo(
       "+faststart",
       previewPath
     ]);
+
+  const encodeAndValidatePreview = async (startSeconds: number) => {
+    await encodePreview(startSeconds);
+    const streams = await run("ffprobe", [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=codec_type",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      previewPath
+    ]);
+    if (!streams.split(/\r?\n/).some((entry) => entry.trim() === "video")) {
+      throw new Error("La clip di anteprima non contiene fotogrammi video.");
+    }
+  };
   try {
-    await encodePreview(previewStart);
+    await encodeAndValidatePreview(previewStart);
   } catch (error) {
     if (previewStart <= 0.25) throw error;
-    await encodePreview(0.2);
+    await encodeAndValidatePreview(0.2);
   }
 
   await prisma.mediaAsset.update({
@@ -297,7 +316,7 @@ async function processVideo(
       frameRate: parseFrameRate(videoStream?.avg_frame_rate ?? videoStream?.r_frame_rate),
       thumbnailPath: relativeStoragePath(thumbnailPath),
       previewPath: relativeStoragePath(previewPath),
-      streamPath: generateHls ? relativeStoragePath(playlistPath) : null,
+      streamPath: generateHls ? relativeStoragePath(playlistPath) : existingStreamPath,
       dominantColor,
       status: MediaStatus.READY
     }

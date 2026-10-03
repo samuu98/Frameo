@@ -19,7 +19,8 @@ services:
       NEXT_PUBLIC_APP_NAME: Frameo
       NODE_OPTIONS: --max-old-space-size=${NODE_MAX_OLD_SPACE_MB:-512}
     volumes:
-      - frameo_media:/app/storage
+      # Lascia vuoto FRAMEO_STORAGE_HOST_PATH per usare il volume Docker interno.
+      - ${FRAMEO_STORAGE_HOST_PATH:-frameo_media}:/app/storage
     depends_on:
       postgres:
         condition: service_healthy

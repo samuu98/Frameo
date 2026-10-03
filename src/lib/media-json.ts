@@ -22,7 +22,9 @@ export function mediaToJson(media: MediaWithRelations) {
   return {
     ...media,
     bytes: media.bytes.toString(),
-    thumbnailUrl: media.thumbnailPath ? streamUrl(media.thumbnailPath) : null,
+    thumbnailUrl: media.thumbnailPath
+      ? `${streamUrl(media.thumbnailPath)}?v=${media.updatedAt.getTime()}`
+      : null,
     previewUrl: media.previewPath ? streamUrl(media.previewPath) : null,
     streamUrl: media.streamPath ? streamUrl(media.streamPath) : null,
     originalUrl: streamUrl(media.originalPath),

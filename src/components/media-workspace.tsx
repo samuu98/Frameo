@@ -3,14 +3,12 @@
 import {
   Archive,
   ArrowDownUp,
-  Bell,
   Camera,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   Clock3,
   Command,
   CopyCheck,
@@ -32,20 +30,22 @@ import {
   LoaderCircle,
   Maximize2,
   Menu,
-  PanelRightClose,
   Pause,
   PencilLine,
   Play,
   Plus,
   Search,
+  ScanLine,
   Scissors,
   Settings,
   Shield,
+  Shuffle,
   SlidersHorizontal,
   Sparkles,
   Star,
   Tag,
   Trash2,
+  Tv,
   Upload,
   UserRound,
   UsersRound,
@@ -54,6 +54,7 @@ import {
   Zap
 } from "lucide-react";
 import {
+  type CSSProperties,
   type ChangeEvent,
   type DragEvent,
   type MouseEvent,
@@ -62,7 +63,10 @@ import {
   useRef,
   useState
 } from "react";
+import { mediaSortGroups, type MediaSort } from "@/lib/media-sort";
+import { createPortal } from "react-dom";
 import { demoMedia } from "@/data/media";
+import { readDemoTvSelection, saveDemoTvSelection } from "@/lib/demo-tv-selection";
 import {
   emptyAdvancedFilters,
   type AdvancedFilterState,
@@ -81,6 +85,7 @@ import { HighlightsPlayer } from "@/components/highlights-player";
 import { OrganizeFilesModal } from "@/components/organize-files-modal";
 import { UserManagement } from "@/components/user-management";
 import { VideoEditorModal } from "@/components/video-editor-modal";
+import { EditorActivity } from "@/components/editor-activity";
 import { LibraryManagement } from "@/components/library-management";
 import { PersonReferenceModal } from "@/components/person-reference-modal";
 
@@ -94,7 +99,7 @@ const navItems = [
 const organizeItems = [
   { label: "Performer", value: "Persone", icon: UsersRound },
   { label: "Tag", value: "Tag", icon: Tag },
-  { label: "Collezioni", value: "Gruppi", icon: Layers3 }
+  { label: "Gallerie", value: "Gruppi", icon: Layers3 }
 ];
 
 const MEDIA_PAGE_SIZE = 48;
@@ -122,6 +127,26 @@ interface TaxonomyGroup {
   name: string;
   color: string;
   count: number;
+  images?: TaxonomyEntry["images"];
+  ownerPersonId?: string | null;
+  previews?: Array<{
+    mediaId: string;
+    title: string;
+    type: "video" | "image";
+    imageUrl: string;
+    videoUrl?: string | null;
+    originalUrl?: string | null;
+    streamUrl?: string | null;
+    durationMs?: number | null;
+    width?: number | null;
+    height?: number | null;
+  }>;
+}
+
+interface DuplicateDetailRecord extends PersistedMediaRecord {
+  matchId: string;
+  similarity: number;
+  reason: string;
 }
 
 interface FolderOption {
@@ -301,7 +326,11 @@ const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): Med
     createdAt: item.createdAt,
     people: item.people.map(({ name }) => name),
     tags: item.tags.map(({ name }) => name),
-    group: item.groups[0]?.name ?? "Da catalogare",
+    galleries: item.groups.map(({ name, ownerPersonId }) => ({ name, ownerPersonId })),
+    group:
+      item.groups.find(({ ownerPersonId }) => !ownerPersonId)?.name ??
+      item.groups[0]?.name ??
+      "Da catalogare",
     status:
       item.status === "READY"
         ? "ready"
@@ -309,6 +338,8 @@ const persistedToMedia = (item: PersistedMediaRecord, fallbackSrc?: string): Med
           ? "error"
           : "processing",
     favorite: item.favorite,
+    showOnTv: item.showOnTv,
+    hideFromRandomHome: item.hideFromRandomHome,
     markers: item.markers ?? [],
     duplicateCount: item.duplicateCount ?? 0,
     sourceFileName: item.sourceFileName ?? undefined,
@@ -347,35 +378,35 @@ function Logo() {
 function Sidebar({
   active,
   onNavigate,
-  onUpload,
-  people,
   uncataloguedCount,
-  duplicateCount
+  duplicateCount,
+  galleries,
+  activeGallery,
+  onOpenGallery,
+  onCreateGallery
 }: {
   active: string;
   onNavigate: (item: string) => void;
-  onUpload: () => void;
-  people: string[];
   uncataloguedCount: number;
   duplicateCount: number;
+  galleries: TaxonomyGroup[];
+  activeGallery?: string;
+  onOpenGallery: (name: string) => void;
+  onCreateGallery: (name: string) => Promise<boolean>;
 }) {
+  const [creating, setCreating] = useState(false);
+  const [galleryName, setGalleryName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const adminActive = adminItems.some(({ label }) => label === active);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
         <Logo />
-        <button className="sidebar-collapse" aria-label="Riduci navigazione">
-          <PanelRightClose size={17} />
-        </button>
       </div>
 
-      <button className="upload-primary" onClick={onUpload}>
-        <Plus size={18} strokeWidth={2.4} />
-        <span>Importa media</span>
-        <kbd>U</kbd>
-      </button>
-
       <nav className="sidebar-nav" aria-label="Navigazione principale">
-        <p className="nav-caption">Esplora</p>
+        <p className="nav-caption">Libreria</p>
         {navItems.map(({ label, icon: Icon }) => (
           <button
             className={active === label ? "nav-item is-active" : "nav-item"}
@@ -387,6 +418,14 @@ function Sidebar({
             {label === "Da catalogare" && uncataloguedCount ? <em>{uncataloguedCount}</em> : null}
           </button>
         ))}
+        <a className="nav-item" href="/downloads">
+          <Download size={18} />
+          <span>Download center</span>
+        </a>
+        <a className="nav-item" href="/tv">
+          <Tv size={18} />
+          <span>Galleria TV</span>
+        </a>
 
         <p className="nav-caption nav-caption-spaced">Organizza</p>
         {organizeItems.map(({ label, value, icon: Icon }) => (
@@ -400,56 +439,78 @@ function Sidebar({
           </button>
         ))}
 
-        <p className="nav-caption nav-caption-spaced">Amministra</p>
-        {adminItems.map(({ label, icon: Icon }) => (
-          <button
-            className={active === label ? "nav-item is-active" : "nav-item"}
-            key={label}
-            onClick={() => onNavigate(label)}
-          >
-            <Icon size={18} />
-            <span>{label}</span>
-            {label === "Duplicati" && duplicateCount ? <em>{duplicateCount}</em> : null}
-          </button>
-        ))}
-      </nav>
-
-      {people.length ? <div className="sidebar-people">
-        <div className="sidebar-section-title">
-          <span>Performer frequenti</span>
-          <button aria-label="Vedi tutte le persone">
-            <ChevronRight size={15} />
-          </button>
-        </div>
-        <div className="avatar-stack">
-          {people.slice(0, 4).map((person) => (
-            <button key={person} title={person} aria-label={person}>
-              <span className="avatar-initials">{person.split(" ").map((part) => part[0]).join("").slice(0, 2)}</span>
+        <section className="sidebar-galleries" aria-label="Gallerie">
+          <div className="sidebar-section-title">
+            <span>Gallerie</span>
+            <button type="button" aria-label="Nuova galleria" title="Nuova galleria" aria-expanded={creating} onClick={() => setCreating((value) => !value)} disabled={saving}>
+              {creating ? <X size={15} /> : <Plus size={15} />}
+            </button>
+          </div>
+          {creating ? (
+            <form className="sidebar-gallery-form" onSubmit={async (event) => {
+              event.preventDefault();
+              const name = galleryName.trim();
+              if (!name || saving) return;
+              setSaving(true);
+              try {
+                if (await onCreateGallery(name)) {
+                  setGalleryName("");
+                  setCreating(false);
+                }
+              } finally {
+                setSaving(false);
+              }
+            }}>
+              <input autoFocus aria-label="Nome galleria" placeholder="Nome galleria" maxLength={64} value={galleryName} onChange={(event) => setGalleryName(event.target.value)} disabled={saving} />
+              <button type="submit" disabled={saving || !galleryName.trim()}>{saving ? "Creazione…" : "Crea galleria"}</button>
+            </form>
+          ) : null}
+          {galleries.map((gallery) => (
+            <button key={gallery.id} className={activeGallery === gallery.name ? "nav-item is-active" : "nav-item"} aria-current={activeGallery === gallery.name ? "page" : undefined} title={gallery.name} onClick={() => onOpenGallery(gallery.name)}>
+              <Layers3 size={17} style={{ color: gallery.color }} />
+              <span>{gallery.name}</span>
+              <em>{gallery.count.toLocaleString("it-IT")}</em>
             </button>
           ))}
-          {people.length > 4 ? <span>+{people.length - 4}</span> : null}
-        </div>
-      </div> : null}
+          {!galleries.length ? <p className="sidebar-gallery-empty">Crea una galleria per raccogliere foto e video.</p> : null}
+        </section>
 
-      <div className="sidebar-footer">
-        <button>
-          <CircleHelp size={17} />
-          Aiuto
-        </button>
-        <button>
-          <Settings size={17} />
-          Impostazioni
-        </button>
-      </div>
+        <details className="sidebar-admin" open={adminActive || undefined}>
+          <summary>
+            <Settings size={17} />
+            <span>Amministrazione</span>
+            <ChevronDown size={15} />
+          </summary>
+          <div>
+            {adminItems.map(({ label, icon: Icon }) => (
+              <button
+                className={active === label ? "nav-item is-active" : "nav-item"}
+                key={label}
+                onClick={() => onNavigate(label)}
+              >
+                <Icon size={18} />
+                <span>{label}</span>
+                {label === "Duplicati" && duplicateCount ? <em>{duplicateCount}</em> : null}
+              </button>
+            ))}
+          </div>
+        </details>
+      </nav>
     </aside>
   );
 }
 
 function Topbar({
+  editRefresh,
+  onOpenResult,
+  active,
   onCommand,
   onUpload,
   onMobileMenu
 }: {
+  editRefresh: number;
+  onOpenResult: (id: string) => void;
+  active: string;
   onCommand: () => void;
   onUpload: () => void;
   onMobileMenu: () => void;
@@ -460,9 +521,7 @@ function Topbar({
         <Menu size={21} />
       </button>
       <div className="breadcrumb">
-        <span>Workspace personale</span>
-        <ChevronRight size={14} />
-        <strong>Libreria</strong>
+        <strong>{active}</strong>
       </div>
       <button className="global-search" onClick={onCommand}>
         <Search size={17} />
@@ -470,9 +529,7 @@ function Topbar({
         <kbd>⌘ K</kbd>
       </button>
       <div className="topbar-actions">
-        <button className="icon-button has-dot" aria-label="Notifiche">
-          <Bell size={18} />
-        </button>
+        <EditorActivity refreshKey={editRefresh} onOpenResult={onOpenResult} />
         <button className="compact-upload" onClick={onUpload}>
           <Upload size={17} />
           <span>Importa</span>
@@ -565,7 +622,7 @@ function TaxonomyManager({
   onOpen,
   onManageImages
 }: {
-  kind: "people" | "tags";
+  kind: "people" | "tags" | "groups";
   entries: TaxonomyEntry[];
   onCreate: (name: string) => void;
   onOpen: (name: string) => void;
@@ -573,18 +630,19 @@ function TaxonomyManager({
 }) {
   const [name, setName] = useState("");
   const isPeople = kind === "people";
+  const isGroups = kind === "groups";
 
   return (
     <section className="taxonomy-manager">
       <header>
         <div>
-          <span>{isPeople ? <UsersRound size={17} /> : <Tag size={17} />}</span>
+          <span>{isPeople ? <UsersRound size={17} /> : isGroups ? <Layers3 size={17} /> : <Tag size={17} />}</span>
           <div>
-          <strong>{isPeople ? "Performer" : "Tag"}</strong>
+          <strong>{isPeople ? "Performer" : isGroups ? "Gallerie" : "Tag"}</strong>
             <small>
               {entries.length
-                ? `${entries.length} ${isPeople ? "performer" : "tag"} nel catalogo`
-                : `Crea il primo ${isPeople ? "performer" : "tag"}`}
+                ? `${entries.length} ${isPeople ? "performer" : isGroups ? "gallerie" : "tag"} nel catalogo`
+                : (isGroups ? "Crea la prima galleria" : `Crea il primo ${isPeople ? "performer" : "tag"}`)}
             </small>
           </div>
         </div>
@@ -599,7 +657,7 @@ function TaxonomyManager({
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder={isPeople ? "Nome performer" : "Nome tag"}
+            placeholder={isPeople ? "Nome performer" : isGroups ? "Nome galleria" : "Nome tag"}
           />
           <button type="submit">
             <Plus size={14} />
@@ -608,18 +666,18 @@ function TaxonomyManager({
         </form>
       </header>
       {entries.length ? (
-        <div className={isPeople ? "taxonomy-grid is-people-grid" : "taxonomy-grid"}>
+        <div className={isPeople ? "taxonomy-grid is-people-grid" : "taxonomy-grid is-preview-grid"}>
           {entries.map((entry) => (
             <article className={isPeople ? "person-taxonomy-card" : ""} key={entry.id}>
-              {isPeople ? (
+              {isPeople || isGroups || entry.images?.length ? (
                 <div className="person-card-images">
-                  {(entry.images ?? []).slice(0, 1).map((image) => (
+                  {(entry.images ?? []).map((image) => (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={image.url} alt="" loading="lazy" key={image.mediaId} />
                   ))}
                   {!entry.images?.length ? (
                     <span>
-                      {entry.name
+                      {isGroups ? <Layers3 size={24} /> : entry.name
                         .split(" ")
                         .map((part) => part[0])
                         .join("")
@@ -627,7 +685,7 @@ function TaxonomyManager({
                     </span>
                   ) : null}
                   {(entry.images?.length ?? 0) > 1 ? (
-                    <small>+{(entry.images?.length ?? 1) - 1} foto</small>
+                    <small>{entry.images?.length} preview</small>
                   ) : null}
                 </div>
               ) : (
@@ -656,7 +714,7 @@ function TaxonomyManager({
         </div>
       ) : (
         <div className="taxonomy-empty">
-          {isPeople ? <UsersRound size={22} /> : <Tag size={22} />}
+          {isPeople ? <UsersRound size={22} /> : isGroups ? <Layers3 size={22} /> : <Tag size={22} />}
           <p>Nessun elemento creato.</p>
         </div>
       )}
@@ -717,6 +775,151 @@ function PersonFacetTabs({
       </nav>
     </section>
   );
+}
+
+function Pagination({
+  currentPage,
+  pageCount,
+  pages,
+  loading,
+  onPage
+}: {
+  currentPage: number;
+  pageCount: number;
+  pages: number[];
+  loading: boolean;
+  onPage: (page: number) => void;
+}) {
+  return (
+    <nav className="media-pagination" aria-label="Pagine della libreria">
+      <button onClick={() => onPage(currentPage - 1)} disabled={currentPage === 1 || loading} aria-label="Pagina precedente"><ChevronLeft size={16} /></button>
+      {pages.map((page, index) => (
+        <span key={page}>
+          {index > 0 && page - pages[index - 1] > 1 ? <i>…</i> : null}
+          <button className={page === currentPage ? "is-active" : ""} onClick={() => onPage(page)} disabled={loading} aria-label={`Pagina ${page}`} aria-current={page === currentPage ? "page" : undefined}>{page}</button>
+        </span>
+      ))}
+      <button onClick={() => onPage(currentPage + 1)} disabled={currentPage === pageCount || loading} aria-label="Pagina successiva"><ChevronRight size={16} /></button>
+    </nav>
+  );
+}
+
+function DiscoveryStrip({
+  people,
+  tags,
+  groups,
+  onPerson,
+  onTag,
+  onGroup
+}: {
+  people: TaxonomyEntry[];
+  tags: TaxonomyEntry[];
+  groups: TaxonomyGroup[];
+  onPerson: (name: string) => void;
+  onTag: (name: string) => void;
+  onGroup: (name: string) => void;
+}) {
+  return (
+    <section className="discovery-hub">
+      <header>
+        <div><span><Sparkles size={14} /> DISCOVERY MIX</span><h2>Esplora performer, scene e fantasie.</h2></div>
+        <p>La selezione alterna il catalogo per darti più varietà, non soltanto gli ultimi file aggiunti.</p>
+      </header>
+      <div className="discovery-performers">
+        {people.filter(({ images }) => images?.length).slice(0, 10).map((person) => (
+          <button onClick={() => onPerson(person.name)} key={person.id}>
+            <span>
+              {(person.images ?? []).map((image) => <img src={image.url} alt="" loading="lazy" key={image.mediaId} />)}
+            </span>
+            <strong>{person.name}</strong><small>{person.count} contenuti</small>
+          </button>
+        ))}
+      </div>
+      <div className="discovery-chips">
+        <span>Trending</span>
+        {tags.slice().sort((a, b) => b.count - a.count).slice(0, 12).map((tag) => (
+          <button style={{ "--chip": tag.color ?? "#6D5DFB" } as CSSProperties} onClick={() => onTag(tag.name)} key={tag.id}>#{tag.name}<small>{tag.count}</small></button>
+        ))}
+        {groups.slice(0, 5).map((group) => (
+          <button className="is-group" onClick={() => onGroup(group.name)} key={group.id}><Layers3 size={12} /> {group.name}<small>{group.count}</small></button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type CompatibleVideoState = { state: "idle" | "pending" | "running" | "ready" | "failed"; progress: number; url?: string; error?: string | null };
+
+function useCompatibleVideo(item: { id: string; originalUrl?: string | null; streamUrl?: string | null; previewUrl?: string | null; src?: string }) {
+  const initialSource = item.streamUrl?.endsWith(".mp4") ? item.streamUrl : item.originalUrl ?? item.previewUrl ?? item.src ?? "";
+  const [source, setSource] = useState(initialSource);
+  const [failed, setFailed] = useState(false);
+  const [job, setJob] = useState<CompatibleVideoState | null>(null);
+  useEffect(() => { setSource(initialSource); setFailed(false); setJob(null); }, [item.id, initialSource]);
+  useEffect(() => {
+    if (job?.state !== "pending" && job?.state !== "running") return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/media/${item.id}/compatible`, { cache: "no-store" });
+        if (!response.ok) return;
+        const next = await response.json() as CompatibleVideoState;
+        if (!active) return;
+        setJob(next);
+        if (next.state === "ready" && next.url) { setSource(next.url); setFailed(false); }
+      } catch { /* Keep the previous progress until the next poll. */ }
+    };
+    const timer = window.setInterval(() => void poll(), 2500);
+    void poll();
+    return () => { active = false; window.clearInterval(timer); };
+  }, [item.id, job?.state]);
+  const prepare = async () => {
+    setJob({ state: "pending", progress: 0 });
+    try {
+      const response = await fetch(`/api/media/${item.id}/compatible`, { method: "POST" });
+      const result = await response.json() as CompatibleVideoState & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Conversione non avviata");
+      setJob(result);
+      if (result.state === "ready" && result.url) { setSource(result.url); setFailed(false); }
+    } catch (error) { setJob({ state: "failed", progress: 0, error: error instanceof Error ? error.message : "Conversione non avviata" }); }
+  };
+  return { source, failed, job, onError: () => setFailed(true), prepare };
+}
+
+function CompatibleVideoNotice({ playback }: { playback: ReturnType<typeof useCompatibleVideo> }) {
+  if (!playback.failed && playback.job?.state !== "pending" && playback.job?.state !== "running") return null;
+  const working = playback.job?.state === "pending" || playback.job?.state === "running";
+  return <div className="compatible-video-notice" role="status">
+    <Film size={24} />
+    <strong>{working ? "Preparo il video completo" : "Il browser non legge questo formato video"}</strong>
+    <p>{working ? `Conversione compatibile in corso · ${playback.job?.progress ?? 0}%` : playback.job?.error ?? "L’originale è disponibile, ma serve una versione compatibile per riprodurlo qui dall’inizio alla fine."}</p>
+    {working ? <progress value={playback.job?.progress ?? 0} max={100} /> : <button type="button" onClick={() => void playback.prepare()}>Prepara versione completa</button>}
+  </div>;
+}
+
+function PerformerHomeHeader({ person, globalGalleries, onManageImages, onCreateGallery, onAssignGallery }: {
+  person: TaxonomyEntry;
+  globalGalleries: TaxonomyGroup[];
+  onManageImages: () => void;
+  onCreateGallery: (name: string) => Promise<boolean>;
+  onAssignGallery: (id: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [galleryId, setGalleryId] = useState("");
+  const [busy, setBusy] = useState(false);
+  return <section className="performer-home-header">
+    <div><UsersRound size={22} /><span><h2>{person.name}</h2><p>Una home unica per tutte le gallerie.</p></span><button onClick={onManageImages}><ImagePlus size={16} /> Foto performer</button></div>
+    <details><summary>Gestisci gallerie</summary><div className="performer-home-gallery-actions">
+      <form onSubmit={async (event) => { event.preventDefault(); if (busy || !name.trim()) return; setBusy(true); try { if (await onCreateGallery(name.trim())) setName(""); } finally { setBusy(false); } }}>
+        <input aria-label="Nome nuova galleria performer" placeholder="Nuova galleria" maxLength={64} value={name} onChange={(event) => setName(event.target.value)} disabled={busy} />
+        <button disabled={busy || !name.trim()}><Plus size={15} /> Crea</button>
+      </form>
+      {globalGalleries.length ? <form onSubmit={async (event) => { event.preventDefault(); if (busy || !galleryId) return; setBusy(true); try { if (await onAssignGallery(galleryId)) setGalleryId(""); } finally { setBusy(false); } }}>
+        <select aria-label="Galleria da assegnare al performer" value={galleryId} onChange={(event) => setGalleryId(event.target.value)} disabled={busy}><option value="">Scegli galleria esistente</option>{globalGalleries.map((gallery) => <option key={gallery.id} value={gallery.id}>{gallery.name}</option>)}</select>
+        <button disabled={busy || !galleryId}>Assegna</button>
+      </form> : null}
+    </div></details>
+  </section>;
 }
 
 function TaxonomyAssignmentPicker({
@@ -809,6 +1012,7 @@ function TaxonomyAssignmentPicker({
 function MediaCard({
   item,
   selected,
+  selectionMode,
   quickMode,
   quickTags,
   onOpen,
@@ -816,10 +1020,12 @@ function MediaCard({
   onOpenGallery,
   onSelect,
   onFavorite,
+  onHomeVisibility,
   onQuickTag
 }: {
   item: MediaItem;
   selected: boolean;
+  selectionMode: boolean;
   quickMode: boolean;
   quickTags: Array<{ name: string; color: string }>;
   onOpen: (item: MediaItem) => void;
@@ -827,14 +1033,15 @@ function MediaCard({
   onOpenGallery: (item: MediaItem) => void;
   onSelect: (item: MediaItem, event: MouseEvent) => void;
   onFavorite: (item: MediaItem, event: MouseEvent) => void;
+  onHomeVisibility: (item: MediaItem) => Promise<void>;
   onQuickTag: (item: MediaItem, tag: string, event: MouseEvent) => void;
 }) {
+  const [homeSaving, setHomeSaving] = useState(false);
   const isProcessing = item.status === "processing";
   const hoverVideoRef = useRef<HTMLVideoElement>(null);
   const inlineVideoRef = useRef<HTMLVideoElement>(null);
   const [previewing, setPreviewing] = useState(false);
   const [inlinePlaying, setInlinePlaying] = useState(false);
-  const [inlineFallback, setInlineFallback] = useState(false);
   const [visualFailed, setVisualFailed] = useState(false);
   const needsVisualPlaceholder =
     visualFailed || (item.type === "video" && !item.thumbnailUrl);
@@ -855,16 +1062,13 @@ function MediaCard({
     if (!video || !inlinePlaying) return;
     void video.play().catch(() => undefined);
     return () => video.pause();
-  }, [inlineFallback, inlinePlaying]);
+  }, [inlinePlaying]);
 
   useEffect(() => {
     setInlinePlaying(false);
-    setInlineFallback(false);
   }, [item.id]);
 
-  const inlineSource = inlineFallback
-    ? item.previewUrl ?? item.originalUrl ?? item.src
-    : item.originalUrl ?? item.previewUrl ?? item.src;
+  const inlineSource = item.streamUrl?.endsWith(".mp4") ? item.streamUrl : item.originalUrl ?? item.previewUrl ?? item.src;
 
   return (
     <article
@@ -875,7 +1079,7 @@ function MediaCard({
         isProcessing ? "is-processing" : "",
         inlinePlaying ? "is-inline-playing" : ""
       ].join(" ")}
-      onClick={() => (quickMode ? undefined : onOpen(item))}
+      onClick={(event) => selectionMode ? onSelect(item, event) : quickMode ? undefined : onOpen(item)}
       onPointerEnter={(event) => {
         if (event.pointerType === "mouse" || event.pointerType === "pen") {
           setPreviewing(true);
@@ -902,7 +1106,8 @@ function MediaCard({
             preload="metadata"
             onClick={(event) => event.stopPropagation()}
             onError={() => {
-              if (!inlineFallback && item.previewUrl) setInlineFallback(true);
+              setInlinePlaying(false);
+              onOpenLarge(item);
             }}
           />
         ) : needsVisualPlaceholder ? (
@@ -948,6 +1153,7 @@ function MediaCard({
         <button
           className="select-control"
           onClick={(event) => onSelect(item, event)}
+          aria-pressed={selected}
           aria-label={selected ? `Deseleziona ${item.title}` : `Seleziona ${item.title}`}
         >
           {selected ? <Check size={15} strokeWidth={3} /> : null}
@@ -966,6 +1172,15 @@ function MediaCard({
             <Heart size={15} fill={item.favorite ? "currentColor" : "none"} />
           </button>
         </div>
+
+        {item.type === "video" ? <button
+          type="button"
+          className={`card-home-toggle ${item.hideFromRandomHome ? "is-excluded" : "is-included"}`}
+          aria-label={`${item.hideFromRandomHome ? "Includi" : "Escludi"} ${item.title} ${item.hideFromRandomHome ? "nella" : "dalla"} home`}
+          aria-pressed={!item.hideFromRandomHome}
+          disabled={homeSaving}
+          onClick={async (event) => { event.stopPropagation(); if (homeSaving) return; setHomeSaving(true); try { await onHomeVisibility(item); } finally { setHomeSaving(false); } }}
+        ><Shuffle size={14} /><span>{homeSaving ? "Salvo…" : item.hideFromRandomHome ? "Fuori home" : "In home"}</span></button> : null}
 
         {item.type === "video" && !isProcessing && !quickMode ? (
           <div className="card-play-actions">
@@ -1041,6 +1256,9 @@ function MediaCard({
           {item.duplicateCount ? (
             <span className="duplicate-count"><CopyCheck size={11} /> {item.duplicateCount}</span>
           ) : null}
+          {item.people.length > 1 ? (
+            <span className="collaboration-badge"><UsersRound size={11} /> COLLAB · {item.people.length}</span>
+          ) : null}
           <button
             onClick={(event) => {
               event.stopPropagation();
@@ -1062,6 +1280,9 @@ function MediaCard({
               ? item.people.slice(0, 3).join(" · ")
               : item.group}
           </p>
+          <div className="card-gallery-labels" aria-label="Gallerie di appartenenza">
+            {(item.galleries?.length ? item.galleries.map(({ name }) => name) : [item.group === "Da catalogare" ? "Senza galleria" : item.group]).map((name) => <span key={name}><Layers3 size={12} />{name}</span>)}
+          </div>
           <small className="catalog-meta">
             {item.tags.length
               ? item.tags.slice(0, 3).join(" · ")
@@ -1090,11 +1311,7 @@ function FullMediaPlayer({
   onClose: () => void;
 }) {
   const playerRef = useRef<HTMLVideoElement>(null);
-  const [fallback, setFallback] = useState(false);
-  const originalAvailable = Boolean(item.originalUrl);
-  const source = fallback
-    ? item.previewUrl ?? item.originalUrl ?? item.src
-    : item.originalUrl ?? item.previewUrl ?? item.src;
+  const playback = useCompatibleVideo(item);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1125,7 +1342,7 @@ function FullMediaPlayer({
           </div>
           <div>
             <em>
-              {fallback ? "ANTEPRIMA OTTIMIZZATA" : originalAvailable ? "QUALITÀ ORIGINALE" : "MIGLIORE QUALITÀ DISPONIBILE"}
+              {playback.source === item.originalUrl ? "QUALITÀ ORIGINALE" : "VERSIONE COMPATIBILE"}
               {item.dimensions !== "Analisi in corso" ? ` · ${item.dimensions}` : ""}
             </em>
             <button onClick={onClose} aria-label="Chiudi player"><X size={20} /></button>
@@ -1134,26 +1351,23 @@ function FullMediaPlayer({
         <div className="full-player-stage" style={{ backgroundColor: item.accent }}>
           <video
             ref={playerRef}
-            key={source}
-            src={source}
+            key={playback.source}
+            src={playback.source}
             poster={item.thumbnailUrl ?? item.src}
             controls
             autoPlay
             playsInline
             preload="metadata"
             onDoubleClick={() => void playerRef.current?.requestFullscreen?.()}
-            onError={() => {
-              if (!fallback && item.previewUrl && source !== item.previewUrl) {
-                setFallback(true);
-              }
-            }}
+            onError={playback.onError}
           />
+          <CompatibleVideoNotice playback={playback} />
         </div>
         <footer>
           <p>
-            {fallback
-              ? "Il codec originale non è riproducibile dal browser: sto usando la versione compatibile."
-              : "Riproduzione diretta del file originale, senza usare la clip ridotta dell’anteprima."}
+            {playback.source === item.originalUrl
+              ? "Riproduzione diretta del file originale."
+              : "Riproduzione della versione completa compatibile con il browser."}
           </p>
           <button onClick={() => void playerRef.current?.requestFullscreen?.()}>
             <Maximize2 size={16} /> Schermo intero
@@ -1179,6 +1393,7 @@ function MediaGallery({
   const touchStart = useRef<number | null>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const item = items[index];
+  const playback = useCompatibleVideo({ id: item?.id ?? "", originalUrl: item?.originalUrl, streamUrl: item?.streamUrl, previewUrl: item?.previewUrl, src: item?.src });
 
   const move = (direction: number) => {
     setIndex((current) => {
@@ -1206,14 +1421,7 @@ function MediaGallery({
   useEffect(() => setFallback(false), [item?.id]);
 
   if (!item) return null;
-  const source =
-    item.type === "video"
-      ? fallback
-        ? item.previewUrl ?? item.originalUrl ?? item.src
-        : item.originalUrl ?? item.previewUrl ?? item.src
-      : fallback
-        ? item.originalUrl ?? item.previewUrl ?? item.src
-        : item.previewUrl ?? item.originalUrl ?? item.src;
+  const source = item.type === "video" ? playback.source : fallback ? item.originalUrl ?? item.previewUrl ?? item.src : item.previewUrl ?? item.originalUrl ?? item.src;
 
   return (
     <div className="media-gallery-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1256,11 +1464,7 @@ function MediaGallery({
               autoPlay
               playsInline
               preload="metadata"
-              onError={() => {
-                if (!fallback && item.previewUrl && source !== item.previewUrl) {
-                  setFallback(true);
-                }
-              }}
+              onError={playback.onError}
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
@@ -1275,6 +1479,7 @@ function MediaGallery({
               }}
             />
           )}
+          {item.type === "video" ? <CompatibleVideoNotice playback={playback} /> : null}
           <button className="gallery-direction is-next" onClick={() => move(1)} aria-label="Media successivo">
             <ChevronRight size={25} />
           </button>
@@ -1319,6 +1524,9 @@ function Inspector({
   availableGroups,
   onClose,
   onFavorite,
+  onRandomHomeVisibility,
+  onTvVisibility,
+  tvSaving,
   onAddTag,
   onRemoveTag,
   onAddPerson,
@@ -1327,7 +1535,11 @@ function Inspector({
   onAddMarker,
   onEdit,
   onRename,
-  onCapture
+  onCapture,
+  onQuickCapture,
+  onOpenDuplicate,
+  onDeleteDuplicate,
+  onDelete
 }: {
   item: MediaItem;
   availablePeople: TaxonomyEntry[];
@@ -1335,6 +1547,9 @@ function Inspector({
   availableGroups: TaxonomyGroup[];
   onClose: () => void;
   onFavorite: () => void;
+  onRandomHomeVisibility: () => void;
+  onTvVisibility: () => void;
+  tvSaving: boolean;
   onAddTag: (tag: string) => void;
   onRemoveTag: (tag: string) => void;
   onAddPerson: (name: string) => void;
@@ -1344,19 +1559,31 @@ function Inspector({
   onEdit: () => void;
   onRename: (name: string) => void;
   onCapture: (positionMs: number) => void;
+  onQuickCapture: (positionMs: number) => void;
+  onOpenDuplicate: (id: string) => void;
+  onDeleteDuplicate: (id: string) => void;
+  onDelete: () => void;
 }) {
   const [tab, setTab] = useState<"info" | "organizza" | "attivita">("info");
   const [openPicker, setOpenPicker] = useState<"people" | "tags" | "groups" | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
   const [markerOpen, setMarkerOpen] = useState(false);
   const [markerLabel, setMarkerLabel] = useState("");
+  const [markerStartMs, setMarkerStartMs] = useState(0);
+  const [markerEndMs, setMarkerEndMs] = useState(10_000);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(item.title);
+  const [duplicates, setDuplicates] = useState<DuplicateDetailRecord[]>([]);
   const playerRef = useRef<HTMLVideoElement>(null);
   const [currentPosition, setCurrentPosition] = useState(
     Math.min(18_000, item.durationMs ?? 18_000)
   );
-  const playableSource = item.originalUrl ?? item.previewUrl ?? item.src;
+  const playback = useCompatibleVideo(item);
+  const seekTo = (milliseconds: number) => {
+    const bounded = Math.max(0, Math.min(milliseconds, item.durationMs ?? milliseconds));
+    setCurrentPosition(bounded);
+    if (playerRef.current) playerRef.current.currentTime = bounded / 1000;
+  };
 
   useEffect(() => {
     setRenameValue(item.title);
@@ -1364,6 +1591,23 @@ function Inspector({
     setPickerQuery("");
     setOpenPicker(null);
   }, [item.id, item.title]);
+
+  useEffect(() => {
+    if (!item.duplicateCount) {
+      setDuplicates([]);
+      return;
+    }
+    let active = true;
+    void fetch(`/api/media/${item.id}/duplicates`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { duplicates?: DuplicateDetailRecord[] } | null) => {
+        if (active) setDuplicates(payload?.duplicates ?? []);
+      })
+      .catch(() => {
+        if (active) setDuplicates([]);
+      });
+    return () => { active = false; };
+  }, [item.id, item.duplicateCount]);
 
   return (
     <aside className="inspector" aria-label={`Dettagli di ${item.title}`}>
@@ -1390,20 +1634,22 @@ function Inspector({
         {item.type === "video" ? (
           <video
             ref={playerRef}
-            src={playableSource}
+            src={playback.source}
             poster={item.thumbnailUrl ?? undefined}
             controls
             playsInline
             preload="metadata"
+            onError={playback.onError}
             onTimeUpdate={(event) => setCurrentPosition(event.currentTarget.currentTime * 1000)}
           />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.src} alt={item.title} />
         )}
+        {item.type === "video" ? <CompatibleVideoNotice playback={playback} /> : null}
         <div className="preview-actions">
           {item.type === "video" ? (
-            <button type="button" onClick={() => onCapture(currentPosition)} aria-label="Cattura fotogramma" title="Cattura fotogramma">
+            <button type="button" onClick={() => onQuickCapture(currentPosition)} aria-label="Screenshot rapido" title="Screenshot rapido">
               <Camera size={17} />
             </button>
           ) : null}
@@ -1453,10 +1699,11 @@ function Inspector({
                   key={marker.id}
                   style={{
                     left: `${Math.min(100, (marker.startMs / (item.durationMs ?? 60_000)) * 100)}%`,
+                    width: `${Math.max(1.2, ((marker.endMs - marker.startMs) / (item.durationMs ?? 60_000)) * 100)}%`,
                     background: marker.color
                   }}
                   title={`${marker.label} · ${formatDuration(marker.startMs)}`}
-                  onClick={() => setCurrentPosition(marker.startMs)}
+                  onClick={() => seekTo(marker.startMs)}
                 />
               ))}
             </div>
@@ -1465,31 +1712,33 @@ function Inspector({
           <div className="marker-toolbar">
             <div>
               {(item.markers ?? []).slice(0, 3).map((marker) => (
-                <button key={marker.id} onClick={() => setCurrentPosition(marker.startMs)}>
+                <button key={marker.id} onClick={() => seekTo(marker.startMs)}>
                   <i style={{ background: marker.color }} />
                   {marker.label}
                   <span>{formatDuration(marker.startMs)}</span>
                 </button>
               ))}
             </div>
-            <button className="add-marker-button" onClick={() => setMarkerOpen((value) => !value)}>
+            <button className="add-marker-button" onClick={() => setMarkerOpen((value) => {
+              if (!value) {
+                setMarkerStartMs(Math.round(currentPosition));
+                setMarkerEndMs(Math.min(Math.round(currentPosition + 10_000), item.durationMs ?? currentPosition + 10_000));
+              }
+              return !value;
+            })}>
               <Plus size={14} /> Marker
             </button>
           </div>
           {markerOpen ? (
             <form
-              className="marker-form"
+              className="marker-form marker-range-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!markerLabel.trim()) return;
                 onAddMarker({
                   id: `local-marker-${Date.now()}`,
-                  label: markerLabel.trim(),
-                  startMs: Math.round(currentPosition),
-                  endMs: Math.min(
-                    Math.round(currentPosition + 6500),
-                    item.durationMs ?? currentPosition + 6500
-                  ),
+                  label: markerLabel.trim() || `Momento ${formatDuration(markerStartMs)}`,
+                  startMs: Math.round(markerStartMs),
+                  endMs: Math.max(Math.round(markerStartMs + 250), Math.round(markerEndMs)),
                   color: "#6D5DFB",
                   featured: true
                 });
@@ -1497,14 +1746,14 @@ function Inspector({
                 setMarkerOpen(false);
               }}
             >
-              <Sparkles size={15} />
-              <input
-                autoFocus
-                value={markerLabel}
-                onChange={(event) => setMarkerLabel(event.target.value)}
-                placeholder={`Titolo marker a ${formatDuration(currentPosition)}`}
-              />
-              <button type="submit">Aggiungi</button>
+              <div className="marker-range-title"><Sparkles size={15} /><input autoFocus value={markerLabel} onChange={(event) => setMarkerLabel(event.target.value)} placeholder="Titolo facoltativo" /></div>
+              <div className="marker-range-inputs">
+                <label><span>Inizio</span><input type="number" min={0} max={(item.durationMs ?? 0) / 1000} step="0.1" value={(markerStartMs / 1000).toFixed(1)} onChange={(event) => setMarkerStartMs(Math.max(0, Number(event.target.value) * 1000))} /><small>sec</small></label>
+                <button type="button" onClick={() => setMarkerStartMs(Math.round(currentPosition))}>Usa {formatDuration(currentPosition)}</button>
+                <label><span>Fine</span><input type="number" min={0} max={(item.durationMs ?? 0) / 1000} step="0.1" value={(markerEndMs / 1000).toFixed(1)} onChange={(event) => setMarkerEndMs(Math.max(markerStartMs + 250, Number(event.target.value) * 1000))} /><small>sec</small></label>
+              </div>
+              <div className="marker-duration-presets"><span>Durata rapida</span>{[5, 10, 20, 30, 60].map((seconds) => <button type="button" onClick={() => setMarkerEndMs(Math.min(markerStartMs + seconds * 1000, item.durationMs ?? markerStartMs + seconds * 1000))} key={seconds}>{seconds}s</button>)}<strong>{formatDuration(Math.max(0, markerEndMs - markerStartMs))}</strong></div>
+              <button className="marker-range-submit" type="submit">Salva intervallo</button>
             </form>
           ) : null}
         </div>
@@ -1559,9 +1808,14 @@ function Inspector({
         ) : null}
         {item.type === "video" ? (
           <div className="inspector-video-tools">
-            <button className="capture-frame-from-inspector" onClick={() => onCapture(currentPosition)}>
+            <button className="capture-frame-from-inspector" onClick={() => onQuickCapture(currentPosition)}>
               <Camera size={15} />
-              Cattura fotogramma
+              Screenshot rapido
+              <span>1 CLICK</span>
+            </button>
+            <button className="capture-frame-from-inspector" onClick={() => onCapture(currentPosition)}>
+              <ScanLine size={15} />
+              Scegli thumbnail o cattura frame
               <span>FRAME LAB</span>
             </button>
             <button className="open-editor-from-inspector" onClick={onEdit}>
@@ -1573,6 +1827,38 @@ function Inspector({
         ) : null}
         {tab === "info" ? (
           <>
+            <section className="detail-section random-home-setting">
+              <div>
+                <Tv size={16} />
+                <span>
+                  <strong>Mostra nella Galleria TV</strong>
+                  <small>Includi questa foto o questo video nella galleria della Fire Stick.</small>
+                </span>
+              </div>
+              <button type="button" role="switch" aria-checked={Boolean(item.showOnTv)}
+                aria-label="Mostra nella Galleria TV" disabled={tvSaving}
+                className={item.showOnTv ? "toggle is-on" : "toggle"}
+                onClick={onTvVisibility}><i /></button>
+            </section>
+            {item.type === "video" ? (
+              <section className="detail-section random-home-setting">
+                <div>
+                  <Shuffle size={16} />
+                  <span>
+                    <strong>Mostra nella home</strong>
+                    <small>Disattiva per non includere questo video nelle selezioni della home.</small>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!item.hideFromRandomHome}
+                  aria-label="Mostra nella home"
+                  className={!item.hideFromRandomHome ? "toggle is-on" : "toggle"}
+                  onClick={onRandomHomeVisibility}
+                ><i /></button>
+              </section>
+            ) : null}
             <section className="detail-section">
               <div className="detail-section-title">
                 <h3>Dettagli file</h3>
@@ -1626,6 +1912,33 @@ function Inspector({
                   <dd>{item.location ?? "Non disponibile"}</dd>
                 </div>
               </dl>
+            </section>
+            {duplicates.length ? (
+              <section className="detail-section inspector-duplicates">
+                <div className="detail-section-title">
+                  <h3><CopyCheck size={15} /> Altri duplicati</h3>
+                  <span>{duplicates.length}</span>
+                </div>
+                <div>
+                  {duplicates.map((duplicate) => (
+                    <article key={duplicate.id}>
+                      <button className="duplicate-detail-preview" onClick={() => onOpenDuplicate(duplicate.id)} aria-label={`Apri ${duplicate.title}`}>
+                        {duplicate.thumbnailUrl ? <img src={duplicate.thumbnailUrl} alt="" /> : <Film size={18} />}
+                      </button>
+                      <button className="duplicate-detail-copy" onClick={() => onOpenDuplicate(duplicate.id)}>
+                        <strong>{duplicate.title}</strong>
+                        <small>{Math.round(duplicate.similarity * 100)}% · {formatBytes(Number(duplicate.bytes))}</small>
+                        <em>{duplicate.reason}</em>
+                      </button>
+                      <button className="duplicate-detail-delete" onClick={() => onDeleteDuplicate(duplicate.id)} aria-label={`Elimina duplicato ${duplicate.title}`} title="Elimina duplicato"><Trash2 size={15} /></button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            <section className="detail-section danger-zone">
+              <div><Trash2 size={16} /><span><strong>Elimina definitivamente</strong><small>Rimuove originale, preview e record dal catalogo.</small></span></div>
+              <button onClick={onDelete}>Elimina dal disco</button>
             </section>
             <section className="detail-section">
               <div className="detail-section-title">
@@ -2201,111 +2514,215 @@ function BulkToolbar({
   tags,
   people,
   groups,
+  selectedItems,
   onClear,
-  onAddTag,
-  onAddPerson,
-  onAddGroup,
+  onApply,
   onEdit,
-  onOrganize
+  onOrganize,
+  onTvSelection,
+  tvSaving,
+  onDelete
 }: {
   count: number;
   tags: TaxonomyEntry[];
   people: TaxonomyEntry[];
   groups: TaxonomyGroup[];
+  selectedItems: MediaItem[];
   onClear: () => void;
-  onAddTag: (tag: string) => void;
-  onAddPerson: (name: string) => void;
-  onAddGroup: (group: TaxonomyGroup) => void;
+  onApply: (kind: "tags" | "people" | "groups", values: string[]) => Promise<boolean>;
   onEdit: () => void;
   onOrganize: () => void;
+  onTvSelection: (showOnTv: boolean) => void;
+  tvSaving: boolean;
+  onDelete: () => void;
 }) {
   const [openPicker, setOpenPicker] = useState<"tags" | "people" | "groups" | null>(null);
   const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [visibleViewportHeight, setVisibleViewportHeight] = useState(0);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () => {
+      setKeyboardInset(Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)));
+      setVisibleViewportHeight(Math.round(viewport.height));
+    };
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
 
   const togglePicker = (picker: "tags" | "people" | "groups") => {
     setOpenPicker((current) => current === picker ? null : picker);
     setQuery("");
+    setPicked([]);
   };
 
+  const apply = async () => {
+    if (!openPicker || !picked.length || busy) return;
+    setBusy(true);
+    try {
+      if (await onApply(openPicker, picked)) {
+        setOpenPicker(null);
+        setQuery("");
+        setPicked([]);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const options = openPicker === "tags" ? tags : openPicker === "people" ? people : groups;
+  const assignedCount = (kind: "tags" | "people" | "groups", value: string) => {
+    if (kind === "tags") return selectedItems.filter(({ tags: itemTags }) => itemTags.includes(value)).length;
+    if (kind === "people") return selectedItems.filter(({ people: itemPeople }) => itemPeople.includes(value)).length;
+    const group = groups.find(({ id }) => id === value);
+    return group ? selectedItems.filter((item) => item.galleries?.some(({ name }) => name === group.name) || item.group === group.name).length : 0;
+  };
+
+  const toolbarStyle = {
+    "--bulk-keyboard-inset": `${keyboardInset}px`,
+    "--bulk-visible-height": visibleViewportHeight ? `${visibleViewportHeight}px` : "100dvh"
+  } as CSSProperties;
+
   return (
-    <div className="bulk-toolbar">
+    <div className="bulk-toolbar" style={toolbarStyle}>
       <span className="bulk-count">{count}</span>
-      <strong>selezionati</strong>
+      <strong>{count === 1 ? "media selezionato" : "media selezionati"}</strong>
       <i />
-      <div className="bulk-taxonomy-action">
-        <button onClick={() => togglePicker("tags")} className={openPicker === "tags" ? "is-active" : ""}>
-          <Tag size={16} /> Tag <ChevronDown size={13} />
-        </button>
-        {openPicker === "tags" ? (
-          <TaxonomyAssignmentPicker
-            kind="tags"
-            options={tags}
-            assignedNames={[]}
-            query={query}
-            onQuery={setQuery}
-            onSelect={(option) => {
-              onAddTag(option.name);
-              setOpenPicker(null);
-            }}
-          />
-        ) : null}
+      <div className="bulk-taxonomy-actions">
+        <button onClick={() => togglePicker("tags")} className={openPicker === "tags" ? "is-active" : ""}><Tag size={16} /> Tag</button>
+        <button onClick={() => togglePicker("people")} className={openPicker === "people" ? "is-active" : ""}><UsersRound size={16} /> Performer</button>
+        <button onClick={() => togglePicker("groups")} className={openPicker === "groups" ? "is-active" : ""}><Layers3 size={16} /> Gallerie</button>
       </div>
-      <div className="bulk-taxonomy-action">
-        <button onClick={() => togglePicker("people")} className={openPicker === "people" ? "is-active" : ""}>
-          <UsersRound size={16} /> Performer <ChevronDown size={13} />
-        </button>
-        {openPicker === "people" ? (
-          <TaxonomyAssignmentPicker
-            kind="people"
-            options={people}
-            assignedNames={[]}
-            query={query}
-            onQuery={setQuery}
-            onSelect={(option) => {
-              onAddPerson(option.name);
-              setOpenPicker(null);
-            }}
-          />
-        ) : null}
+      <div className="bulk-tv-actions">
+        <button disabled={tvSaving || selectedItems.every((item) => item.showOnTv)} onClick={() => onTvSelection(true)}><Tv size={16} /> Aggiungi alla TV</button>
+        <button disabled={tvSaving || selectedItems.every((item) => !item.showOnTv)} onClick={() => onTvSelection(false)}><X size={16} /> Rimuovi dalla TV</button>
       </div>
-      <div className="bulk-taxonomy-action">
-        <button onClick={() => togglePicker("groups")} className={openPicker === "groups" ? "is-active" : ""}>
-          <Layers3 size={16} /> Gruppo <ChevronDown size={13} />
-        </button>
-        {openPicker === "groups" ? (
-          <TaxonomyAssignmentPicker
-            kind="groups"
-            options={groups}
-            assignedNames={[]}
-            query={query}
-            onQuery={setQuery}
-            onSelect={(option) => {
-              const group = groups.find(({ id }) => id === option.id);
-              if (group) onAddGroup(group);
-              setOpenPicker(null);
-            }}
-          />
-        ) : null}
-      </div>
-      <button onClick={onOrganize}>
+      <button className="bulk-secondary" onClick={onOrganize}>
         <FolderInput size={16} />
         Filesystem
       </button>
-      <button onClick={onEdit}>
+      <button className="bulk-secondary" onClick={onEdit}>
         <Scissors size={16} />
         Editor
       </button>
-      <button>
-        <Download size={16} />
-        Scarica
-      </button>
-      <button className="danger">
-        <Trash2 size={16} />
+      <button className="danger" onClick={onDelete} aria-label={`Elimina ${count} media selezionati`}>
+        <Trash2 size={16} /> Elimina
       </button>
       <button className="bulk-close" onClick={onClear} aria-label="Deseleziona tutto">
         <X size={17} />
       </button>
+      {openPicker ? (
+        <BulkTaxonomyPicker
+          kind={openPicker}
+          options={options}
+          query={query}
+          picked={picked}
+          busy={busy}
+          count={count}
+          keyboardInset={keyboardInset}
+          assignedCount={(value) => assignedCount(openPicker, value)}
+          valueFor={(option) => openPicker === "groups" ? option.id : option.name}
+          onQuery={setQuery}
+          onToggle={(value) => setPicked((current) => current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value])}
+          onApply={() => void apply()}
+          onClose={() => setOpenPicker(null)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function BulkTaxonomyPicker({
+  kind,
+  options,
+  query,
+  picked,
+  busy,
+  count,
+  keyboardInset,
+  assignedCount,
+  valueFor,
+  onQuery,
+  onToggle,
+  onApply,
+  onClose
+}: {
+  kind: "tags" | "people" | "groups";
+  options: Array<{ id: string; name: string; color?: string | null; count: number }>;
+  query: string;
+  picked: string[];
+  busy: boolean;
+  count: number;
+  keyboardInset: number;
+  assignedCount: (value: string) => number;
+  valueFor: (option: { id: string; name: string }) => string;
+  onQuery: (value: string) => void;
+  onToggle: (value: string) => void;
+  onApply: () => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const closeRef = useRef(onClose);
+  const busyRef = useRef(busy);
+  closeRef.current = onClose;
+  busyRef.current = busy;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (window.matchMedia("(min-width: 861px)").matches) inputRef.current?.focus();
+    else inputRef.current?.closest("section")?.querySelector<HTMLButtonElement>("header button")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busyRef.current) closeRef.current();
+      if (event.key === "Tab") {
+        const buttons = inputRef.current?.closest("section")?.querySelectorAll<HTMLElement>('button:not(:disabled), input');
+        if (!buttons?.length) return;
+        const first = buttons[0]; const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = overflow; window.removeEventListener("keydown", onKey); previous?.focus(); };
+  }, []);
+  const filtered = options.filter(({ name }) => name.toLocaleLowerCase("it").includes(query.trim().toLocaleLowerCase("it")));
+  const exactMatch = options.some(({ name }) => name.toLocaleLowerCase("it") === query.trim().toLocaleLowerCase("it"));
+  const canCreate = kind !== "groups" && query.trim().length > 0 && !exactMatch;
+  const title = kind === "tags" ? "Aggiungi tag" : kind === "people" ? "Assegna performer" : "Aggiungi alle gallerie";
+  const newValue = query.trim();
+  const style = { "--bulk-keyboard-inset": `${keyboardInset}px` } as CSSProperties;
+
+  return (
+    createPortal(<div className="bulk-picker-backdrop" style={style} onClick={busy ? undefined : onClose}><section className="bulk-picker-panel" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
+      <header><div><strong>{title}</strong><small>Seleziona voci per {count} media · massimo 30</small></div><button type="button" onClick={onClose} aria-label="Chiudi pannello" disabled={busy}><X size={17} /></button></header>
+      <label className="bulk-picker-search"><Search size={16} /><input ref={inputRef} value={query} onChange={(event) => onQuery(event.target.value)} placeholder={kind === "tags" ? "Cerca o scrivi un nuovo tag" : kind === "people" ? "Cerca o scrivi un performer" : "Cerca una galleria"} /><span>{filtered.length}</span></label>
+      <div className="bulk-picker-options">
+        {filtered.map((option) => {
+          const value = valueFor(option);
+          const selected = picked.includes(value);
+          const already = assignedCount(value);
+          return <button type="button" disabled={picked.length >= 30 && !selected} className={selected ? "is-picked" : ""} key={option.id} onClick={() => onToggle(value)}>
+            <i style={{ background: option.color ?? (kind === "groups" ? "#3f8d77" : "#6D5DFB") }}>{kind === "tags" ? <Tag size={13} /> : kind === "groups" ? <Layers3 size={13} /> : option.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}</i>
+            <span><strong>{option.name}</strong><small>{already === count ? "Già assegnato a tutti" : already ? `Già presente su ${already} di ${count}` : `${option.count.toLocaleString("it-IT")} media in libreria`}</small></span>
+            <b aria-hidden="true">{selected ? <Check size={16} /> : <Plus size={16} />}</b>
+          </button>;
+        })}
+        {canCreate ? <button type="button" disabled={picked.length >= 30 && !picked.includes(newValue)} className={`bulk-picker-create ${picked.includes(newValue) ? "is-picked" : ""}`} onClick={() => onToggle(newValue)}><i><Plus size={14} /></i><span><strong>Crea e assegna “{newValue}”</strong><small>La voce verrà aggiunta ai media selezionati</small></span><b>{picked.includes(newValue) ? <Check size={16} /> : null}</b></button> : null}
+        {!filtered.length && !canCreate ? <p>Nessun risultato. Prova un’altra ricerca.</p> : null}
+      </div>
+      <footer><button type="button" className="bulk-picker-cancel" disabled={busy} onClick={onClose}>Annulla</button><button type="button" className="bulk-picker-apply" disabled={!picked.length || busy} onClick={onApply}>{busy ? "Salvataggio…" : `Applica ${picked.length || "selezione"} a ${count} media`}</button></footer>
+    </section></div>, document.body)
   );
 }
 
@@ -2333,7 +2750,7 @@ function MobileNav({
         <Plus size={23} />
       </button>
       {[
-        { label: "Collezioni", value: "Gruppi", icon: Layers3 },
+        { label: "Gallerie", value: "Gruppi", icon: Layers3 },
         { label: "Cerca", value: "Cerca", icon: Search }
       ].map(({ label, value, icon: Icon }) => (
         <button className={active === value ? "is-active" : ""} key={value} onClick={() => onNavigate(value)}>
@@ -2345,10 +2762,50 @@ function MobileNav({
   );
 }
 
+function DeleteMediaDialog({ item, busy, onCancel, onConfirm }: {
+  item: MediaItem;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="delete-media-backdrop" onMouseDown={() => !busy && onCancel()}>
+      <section className="delete-media-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-media-title" onMouseDown={(event) => event.stopPropagation()}>
+        <span><Trash2 size={22} /></span>
+        <p>ELIMINAZIONE FISICA</p>
+        <h2 id="delete-media-title">Eliminare “{item.title}”?</h2>
+        <div><HardDrive size={17} /><span><strong>Il file verrà rimosso dal disco</strong><small>Anche thumbnail, preview, marker e collegamenti verranno eliminati. L’azione non è annullabile.</small></span></div>
+        <footer><button onClick={onCancel} disabled={busy}>Annulla</button><button className="danger" onClick={onConfirm} disabled={busy}>{busy ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}{busy ? "Eliminazione…" : "Elimina definitivamente"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function DeleteMultipleDialog({ items, busy, progress, onCancel, onConfirm }: {
+  items: MediaItem[];
+  busy: boolean;
+  progress: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="delete-media-backdrop" onMouseDown={() => !busy && onCancel()}>
+      <section className="delete-media-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-delete-title" onMouseDown={(event) => event.stopPropagation()}>
+        <span><Trash2 size={22} /></span>
+        <p>ELIMINAZIONE MULTIPLA</p>
+        <h2 id="bulk-delete-title">Eliminare {items.length} media?</h2>
+        <div><HardDrive size={17} /><span><strong>Originali e anteprime verranno rimossi dal disco</strong><small>{items.slice(0, 3).map(({ title }) => title).join(" · ")}{items.length > 3 ? ` · altri ${items.length - 3}` : ""}</small></span></div>
+        {busy ? <small className="bulk-delete-progress">Eliminazione {Math.min(progress + 1, items.length)} di {items.length}…</small> : null}
+        <footer><button onClick={onCancel} disabled={busy}>Annulla</button><button className="danger" onClick={onConfirm} disabled={busy}>{busy ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}{busy ? "Eliminazione…" : "Elimina definitivamente"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
 export function MediaWorkspace() {
   const [activeNav, setActiveNav] = useState("Libreria");
   const [filter, setFilter] = useState<"all" | MediaType>("all");
-  const [sort, setSort] = useState<"recent" | "name">("recent");
+  const [sort, setSort] = useState<MediaSort>("smart");
   const [view, setView] = useState<"grid" | "compact" | "stories">("grid");
   const [items, setItems] = useState<MediaItem[]>([]);
   const [libraryTotal, setLibraryTotal] = useState(0);
@@ -2360,11 +2817,14 @@ export function MediaWorkspace() {
   });
   const [mediaRefreshNonce, setMediaRefreshNonce] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [homeRandomSeed, setHomeRandomSeed] = useState(createClientId);
   const [mediaLoading, setMediaLoading] = useState(true);
   const [externalScan, setExternalScan] = useState<ExternalScanState | null>(null);
   const [taxonomyPeople, setTaxonomyPeople] = useState<TaxonomyEntry[]>([]);
   const [taxonomyTags, setTaxonomyTags] = useState<TaxonomyEntry[]>([]);
   const [taxonomyGroups, setTaxonomyGroups] = useState<TaxonomyGroup[]>([]);
+  const [performerGalleries, setPerformerGalleries] = useState<TaxonomyGroup[]>([]);
+  const [performerGalleryRefresh, setPerformerGalleryRefresh] = useState(0);
   const [folderOptions, setFolderOptions] = useState<FolderOption[]>([]);
   const [folderFilter, setFolderFilter] = useState("");
   const [personFacets, setPersonFacets] = useState<PersonFacets | null>(null);
@@ -2378,23 +2838,60 @@ export function MediaWorkspace() {
   const [quickMode, setQuickMode] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [tvSaving, setTvSaving] = useState(false);
+  const tvSavingRef = useRef(false);
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterState>(
     emptyAdvancedFilters
   );
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const [highlightsOpen, setHighlightsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editRefresh, setEditRefresh] = useState(0);
   const [organizerOpen, setOrganizerOpen] = useState(false);
   const [captureRequest, setCaptureRequest] = useState<{
     item: MediaItem;
     initialTimeMs: number;
   } | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<MediaItem | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [bulkDeleteRequest, setBulkDeleteRequest] = useState<MediaItem[] | null>(null);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState(0);
   const scanCompletionRef = useRef<string | null>(null);
+  const selectedPerson =
+    advancedFilters.people.length === 1
+      ? taxonomyPeople.find(({ name }) => name === advancedFilters.people[0]) ?? null
+      : null;
+  const performerHome = Boolean(
+    selectedPerson &&
+    activeNav === "Libreria" &&
+    !advancedFilters.groups.length &&
+    !advancedFilters.tags.length &&
+    filter !== "image"
+  );
 
   const mediaQuery = useMemo(() => {
     const params = new URLSearchParams();
+    const randomHome =
+      activeNav === "Libreria" &&
+      (sort === "smart" || sort === "random") &&
+      filter === "all" &&
+      !folderFilter &&
+      countAdvancedFilters(advancedFilters) === 0;
+    if (randomHome) {
+      params.set("randomVideos", "true");
+      params.set("seed", homeRandomSeed);
+    } else if (activeNav === "Libreria" && sort === "smart") {
+      params.set("discover", "true");
+    }
     if (filter !== "all") params.set("kind", filter);
-    if (sort === "name") params.set("sort", "name");
+    if (performerHome && selectedPerson) {
+      params.set("kind", "video");
+      params.set("performerHome", selectedPerson.id);
+    }
+    params.set("sort", sort);
+    if (sort === "random") params.set("seed", homeRandomSeed);
     if (activeNav === "Preferiti" || advancedFilters.favoriteOnly) {
       params.set("favorite", "true");
     }
@@ -2423,10 +2920,14 @@ export function MediaWorkspace() {
     if (advancedFilters.dateFrom) params.set("dateFrom", advancedFilters.dateFrom);
     if (advancedFilters.dateTo) params.set("dateTo", advancedFilters.dateTo);
     return params.toString();
-  }, [activeNav, advancedFilters, filter, folderFilter, sort]);
+  }, [activeNav, advancedFilters, filter, folderFilter, homeRandomSeed, performerHome, selectedPerson, sort]);
 
   const visibleItems = useMemo(() => {
-    let result = filter === "all" ? [...items] : items.filter((item) => item.type === filter);
+    let result = performerHome
+      ? items.filter((item) => item.type === "video")
+      : filter === "all"
+        ? [...items]
+        : items.filter((item) => item.type === filter);
     if (activeNav === "Preferiti") result = result.filter((item) => item.favorite);
     if (activeNav === "Da catalogare") {
       result = result.filter(
@@ -2458,10 +2959,10 @@ export function MediaWorkspace() {
       );
     }
     if (advancedFilters.groups.length) {
-      result = result.filter((item) => advancedFilters.groups.includes(item.group));
+      result = result.filter((item) => advancedFilters.groups.some((name) => item.group === name || item.galleries?.some((gallery) => gallery.name === name)));
     }
     if (advancedFilters.excludeGroups.length) {
-      result = result.filter((item) => !advancedFilters.excludeGroups.includes(item.group));
+      result = result.filter((item) => !advancedFilters.excludeGroups.some((name) => item.group === name || item.galleries?.some((gallery) => gallery.name === name)));
     }
     if (advancedFilters.duration !== "any") {
       result = result.filter((item) => {
@@ -2498,19 +2999,47 @@ export function MediaWorkspace() {
     if (advancedFilters.dateTo) {
       result = result.filter((item) => !item.createdAt || item.createdAt <= `${advancedFilters.dateTo}T23:59:59`);
     }
-    if (sort === "name") result.sort((a, b) => a.title.localeCompare(b.title));
     return result;
-  }, [activeNav, advancedFilters, filter, items, sort]);
+  }, [activeNav, advancedFilters, filter, items, performerHome, sort]);
 
   const selectedItems = useMemo(
-    () => items.filter((item) => selectedIds.has(item.id)),
-    [items, selectedIds]
+    () => visibleItems.filter((item) => selectedIds.has(item.id)),
+    [visibleItems, selectedIds]
   );
+  useEffect(() => {
+    const visibleIds = new Set(visibleItems.map(({ id }) => id));
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleItems]);
   const advancedFilterCount = countAdvancedFilters(advancedFilters);
-  const selectedPerson =
-    advancedFilters.people.length === 1
-      ? taxonomyPeople.find(({ name }) => name === advancedFilters.people[0]) ?? null
-      : null;
+  const simpleHome =
+    activeNav === "Libreria" &&
+    filter === "all" &&
+    sort === "smart" &&
+    !folderFilter &&
+    advancedFilterCount === 0;
+  useEffect(() => {
+    if (!selectedPerson) {
+      setPerformerGalleries([]);
+      return;
+    }
+    let active = true;
+    void fetch(`/api/taxonomy/people/${selectedPerson.id}/galleries`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { galleries?: TaxonomyGroup[] } | null) => {
+        if (active) setPerformerGalleries(payload?.galleries ?? []);
+      })
+      .catch(() => {
+        if (active) setPerformerGalleries([]);
+      });
+    return () => { active = false; };
+  }, [selectedPerson?.id, performerGalleryRefresh]);
+  useEffect(() => {
+    if (activeNav === "Galleria" && !advancedFilters.groups.length) setActiveNav("Libreria");
+  }, [activeNav, advancedFilters.groups.length]);
+
   const imageCount = libraryCounts.image;
   const videoCount = libraryCounts.video;
   const uncataloguedCount = libraryCounts.uncatalogued;
@@ -2579,12 +3108,13 @@ export function MediaWorkspace() {
         counts?: { all: number; image: number; video: number; uncatalogued: number };
       } | null) => {
         if (!active || !Array.isArray(payload?.items)) return;
+        const demoTvSelection = payload.mode === "demo" ? readDemoTvSelection() : new Set<string>();
         setItems(
           payload.mode === "demo"
             ? demoMedia.slice(
                 (currentPage - 1) * MEDIA_PAGE_SIZE,
                 currentPage * MEDIA_PAGE_SIZE
-              )
+              ).map((item) => ({ ...item, showOnTv: demoTvSelection.has(item.id) }))
             : payload.items.map((item) => persistedToMedia(item))
         );
         setLibraryTotal(
@@ -2632,18 +3162,25 @@ export function MediaWorkspace() {
           name: string;
           color?: string | null;
           count?: number;
+          images?: TaxonomyEntry["images"];
         }>;
         groups?: Array<string | {
           id: string;
           name: string;
           accent?: string | null;
           count?: number;
+          images?: TaxonomyEntry["images"];
         }>;
       } | null) => {
         if (!active || !payload) return;
         setTaxonomyPeople((payload.people ?? []).map((entry) =>
           typeof entry === "string"
-            ? { id: `demo-person-${entry}`, name: entry, count: 0 }
+            ? {
+                id: `demo-person-${entry}`,
+                name: entry,
+                count: demoMedia.filter((item) => item.people.includes(entry)).length,
+                images: demoMedia.filter((item) => item.people.includes(entry)).slice(0, 4).map((item) => ({ mediaId: item.id, title: item.title, url: item.thumbnailUrl ?? item.src }))
+              }
             : {
                 id: entry.id,
                 name: entry.name,
@@ -2652,12 +3189,13 @@ export function MediaWorkspace() {
               }
         ));
         setTaxonomyTags((payload.tags ?? []).map((entry) => typeof entry === "string"
-          ? { id: `demo-tag-${entry}`, name: entry, color: "#6D5DFB", count: 0 }
+          ? { id: `demo-tag-${entry}`, name: entry, color: "#6D5DFB", count: demoMedia.filter((item) => item.tags.includes(entry)).length, images: demoMedia.filter((item) => item.tags.includes(entry)).slice(0, 4).map((item) => ({ mediaId: item.id, title: item.title, url: item.thumbnailUrl ?? item.src })) }
           : {
               id: entry.id,
               name: entry.name,
               color: entry.color ?? "#6D5DFB",
-              count: entry.count ?? 0
+              count: entry.count ?? 0,
+              images: entry.images
             }));
         setTaxonomyGroups((payload.groups ?? []).map((entry) =>
           typeof entry === "string"
@@ -2665,13 +3203,15 @@ export function MediaWorkspace() {
                 id: `demo-group-${entry}`,
                 name: entry,
                 color: "#F97316",
-                count: 0
+                count: demoMedia.filter((item) => item.group === entry).length,
+                images: demoMedia.filter((item) => item.group === entry).slice(0, 4).map((item) => ({ mediaId: item.id, title: item.title, url: item.thumbnailUrl ?? item.src }))
               }
             : {
                 id: entry.id,
                 name: entry.name,
                 color: entry.accent ?? "#F97316",
-                count: entry.count ?? 0
+                count: entry.count ?? 0,
+                images: entry.images
               }
         ));
       })
@@ -2804,7 +3344,76 @@ export function MediaWorkspace() {
 
   const toggleFavorite = (item: MediaItem, event?: MouseEvent) => {
     event?.stopPropagation();
-    updateItem(item.id, (current) => ({ ...current, favorite: !current.favorite }));
+    const previous = Boolean(item.favorite);
+    const favorite = !previous;
+    updateItem(item.id, (current) => ({ ...current, favorite }));
+    void fetch(`/api/media/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favorite })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as { item?: PersistedMediaRecord; error?: string; mode?: string } | null;
+        if (!response.ok || (!payload?.item && payload?.mode !== "demo")) throw new Error(payload?.error ?? "Preferito non salvato");
+        if (payload.item) replacePersistedItem(payload.item);
+        setToast(favorite ? "Aggiunto ai preferiti" : "Rimosso dai preferiti");
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, favorite: previous }));
+        setToast(error instanceof Error ? error.message : "Preferito non salvato");
+      });
+  };
+
+  const toggleRandomHomeVisibility = async (item: MediaItem) => {
+    const previous = Boolean(item.hideFromRandomHome);
+    const hideFromRandomHome = !previous;
+    updateItem(item.id, (current) => ({ ...current, hideFromRandomHome }));
+    await fetch(`/api/media/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hideFromRandomHome })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as {
+          item?: PersistedMediaRecord;
+          error?: string;
+          mode?: string;
+        } | null;
+        if (!response.ok || (!payload?.item && payload?.mode !== "demo")) {
+          throw new Error(payload?.error ?? "Preferenza home non salvata");
+        }
+        if (payload.item) replacePersistedItem(payload.item);
+        setToast(hideFromRandomHome ? "Video escluso dalla home" : "Video incluso nella home");
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, hideFromRandomHome: previous }));
+        setToast(error instanceof Error ? error.message : "Preferenza home non salvata");
+      });
+  };
+
+  const setTvSelection = async (targets: MediaItem[], showOnTv: boolean) => {
+    if (tvSavingRef.current || !targets.length) return;
+    tvSavingRef.current = true;
+    setTvSaving(true);
+    try {
+      const response = await fetch("/api/media/tv-selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaIds: targets.map(({ id }) => id), showOnTv })
+      });
+      const payload = await response.json().catch(() => null) as { mediaIds?: string[]; error?: string; mode?: string } | null;
+      if (!response.ok || !payload?.mediaIds) throw new Error(payload?.error ?? "Selezione TV non salvata");
+      if (payload.mode === "demo") saveDemoTvSelection(payload.mediaIds, showOnTv);
+      const ids = new Set(payload.mediaIds);
+      setItems((current) => current.map((item) => ids.has(item.id) ? { ...item, showOnTv } : item));
+      setInspected((current) => current && ids.has(current.id) ? { ...current, showOnTv } : current);
+      setToast(`${ids.size} ${ids.size === 1 ? "contenuto" : "contenuti"} ${showOnTv ? "aggiunti alla" : "rimossi dalla"} Galleria TV${payload.mode === "demo" ? " · Demo, solo questo browser" : ""}`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Selezione TV non salvata");
+    } finally {
+      tvSavingRef.current = false;
+      setTvSaving(false);
+    }
   };
 
   const toggleSelect = (item: MediaItem, event: MouseEvent) => {
@@ -2865,12 +3474,14 @@ export function MediaWorkspace() {
           name: string;
           color?: string | null;
           count?: number;
+          images?: TaxonomyEntry["images"];
         }>;
         groups?: Array<{
           id: string;
           name: string;
           accent?: string | null;
           count?: number;
+          images?: TaxonomyEntry["images"];
         }>;
       } | null) => {
         if (!payload) return;
@@ -2884,13 +3495,15 @@ export function MediaWorkspace() {
           id: entry.id,
           name: entry.name,
           color: entry.color ?? "#6D5DFB",
-          count: entry.count ?? 0
+          count: entry.count ?? 0,
+          images: entry.images
         })));
         setTaxonomyGroups((payload.groups ?? []).map((entry) => ({
           id: entry.id,
           name: entry.name,
           color: entry.accent ?? "#F97316",
-          count: entry.count ?? 0
+          count: entry.count ?? 0,
+          images: entry.images
         })));
       })
       .catch(() => undefined);
@@ -2978,96 +3591,42 @@ export function MediaWorkspace() {
       });
   };
 
-  const addTagToSelection = (tag: string) => {
-    const targets = selectedItems;
-    setItems((current) =>
-      current.map((item) =>
-        selectedIds.has(item.id) && !item.tags.includes(tag)
-          ? { ...item, tags: [...item.tags, tag] }
-          : item
-      )
-    );
-    void fetch("/api/media/bulk-taxonomy", {
+  const applyTaxonomyToSelection = async (
+    kind: "tags" | "people" | "groups",
+    values: string[]
+  ): Promise<boolean> => {
+    const targetIds = selectedItems.map(({ id }) => id);
+    if (!targetIds.length || !values.length) return false;
+    const payload = {
+      mediaIds: targetIds,
+      ...(kind === "tags" ? { addTagNames: values } : {}),
+      ...(kind === "people" ? { addPersonNames: values } : {}),
+      ...(kind === "groups" ? { addGroupIds: values } : {})
+    };
+    try {
+      const response = await fetch("/api/media/bulk-taxonomy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mediaIds: targets.map(({ id }) => id),
-        addTagNames: [tag]
-      })
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null) as {
-          updated?: number;
-          error?: string;
-        } | null;
-        if (!response.ok) throw new Error(payload?.error ?? "Tag non salvato");
-        setToast(`“${tag}” aggiunto a ${payload?.updated ?? targets.length} media`);
-        reloadTaxonomy();
-      })
-      .catch((error) => {
-        setToast(error instanceof Error ? error.message : "Tag non salvato");
+      body: JSON.stringify(payload)
       });
-  };
-
-  const addPersonToSelection = (name: string) => {
-    const targets = selectedItems;
-    setItems((current) =>
-      current.map((item) =>
-        selectedIds.has(item.id) && !item.people.includes(name)
-          ? { ...item, people: [...item.people, name] }
-          : item
-      )
-    );
-    void fetch("/api/media/bulk-taxonomy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mediaIds: targets.map(({ id }) => id),
-        addPersonNames: [name]
-      })
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null) as {
-          updated?: number;
-          error?: string;
-        } | null;
-        if (!response.ok) throw new Error(payload?.error ?? "Persona non assegnata");
-        setToast(`${name} assegnato a ${payload?.updated ?? targets.length} media`);
-        reloadTaxonomy();
-      })
-      .catch((error) => {
-        setToast(error instanceof Error ? error.message : "Persona non assegnata");
-      });
-  };
-
-  const addGroupToSelection = (group: TaxonomyGroup) => {
-    const targets = selectedItems;
-    setItems((current) =>
-      current.map((item) =>
-        selectedIds.has(item.id) ? { ...item, group: group.name } : item
-      )
-    );
-    void fetch("/api/media/bulk-taxonomy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mediaIds: targets.map(({ id }) => id),
-        addGroupIds: [group.id]
-      })
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null) as {
-          updated?: number;
-          error?: string;
-        } | null;
-        if (!response.ok) throw new Error(payload?.error ?? "Gruppo non assegnato");
-        setToast(`“${group.name}” assegnato a ${payload?.updated ?? targets.length} media`);
-        reloadTaxonomy();
-      })
-      .catch((error) => {
-        setToast(error instanceof Error ? error.message : "Gruppo non assegnato");
-        setMediaRefreshNonce((current) => current + 1);
-      });
+      const result = await response.json().catch(() => null) as { updated?: number; error?: string } | null;
+      if (!response.ok) throw new Error(result?.error ?? "Assegnazione non riuscita");
+      const selectedNames = kind === "groups"
+        ? values.map((id) => [...taxonomyGroups, ...performerGalleries].find((group) => group.id === id)?.name ?? id)
+        : values;
+      const category = kind === "tags" ? "Tag" : kind === "people" ? "Performer" : "Gallerie";
+      setToast(`${category} aggiornati su ${result?.updated ?? targetIds.length} media: ${selectedNames.join(", ")}`);
+      setMediaRefreshNonce((current) => current + 1);
+      reloadTaxonomy();
+      if (kind === "groups" && values.some((id) => [...taxonomyGroups, ...performerGalleries].find((group) => group.id === id)?.ownerPersonId)) {
+        setPerformerGalleryRefresh((current) => current + 1);
+      }
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Assegnazione non riuscita");
+      setMediaRefreshNonce((current) => current + 1);
+      return false;
+    }
   };
 
   const addMarker = (item: MediaItem, marker: HighlightMarker) => {
@@ -3075,12 +3634,25 @@ export function MediaWorkspace() {
       ...current,
       markers: [...(current.markers ?? []), marker]
     }));
-    setToast(`Momento “${marker.label}” aggiunto a ${item.title}`);
+    setToast(`Salvo “${marker.label}”…`);
     void fetch(`/api/media/${item.id}/markers`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(marker)
-    }).catch(() => undefined);
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as { marker?: HighlightMarker; error?: string } | null;
+        if (!response.ok || !payload?.marker) throw new Error(payload?.error ?? "Marker non salvato");
+        updateItem(item.id, (current) => ({
+          ...current,
+          markers: (current.markers ?? []).map((entry) => entry.id === marker.id ? payload.marker! : entry)
+        }));
+        setToast(`Momento “${payload.marker.label}” aggiunto`);
+      })
+      .catch((error) => {
+        updateItem(item.id, (current) => ({ ...current, markers: (current.markers ?? []).filter(({ id }) => id !== marker.id) }));
+        setToast(error instanceof Error ? error.message : "Marker non salvato");
+      });
   };
 
   const renameFile = (item: MediaItem, name: string) => {
@@ -3118,6 +3690,138 @@ export function MediaWorkspace() {
       ...current.filter((item) => item.id !== captured.id)
     ]);
     setToast(`“${captured.title}” salvato nella libreria`);
+  };
+
+  const quickCapture = (item: MediaItem, timestampMs: number) => {
+    setToast(`Cattura a ${formatDuration(timestampMs)}…`);
+    void fetch(`/api/media/${item.id}/screenshots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timestampMs: Math.max(0, Math.round(timestampMs)) })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as { item?: PersistedMediaRecord; error?: string } | null;
+        if (!response.ok || !payload?.item) throw new Error(payload?.error ?? "Screenshot non riuscito");
+        addCapturedFrame(payload.item);
+      })
+      .catch((error) => setToast(error instanceof Error ? error.message : "Screenshot non riuscito"));
+  };
+
+  const setThumbnailFromFrame = async (item: MediaItem, timestampMs: number) => {
+    setToast(`Imposto la thumbnail da ${formatDuration(timestampMs)}…`);
+    try {
+      const response = await fetch(`/api/media/${item.id}/thumbnail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timestampMs: Math.max(0, Math.round(timestampMs)) })
+      });
+      const payload = await response.json().catch(() => null) as {
+        item?: PersistedMediaRecord;
+        error?: string;
+        mode?: string;
+      } | null;
+      if (!response.ok || (!payload?.item && payload?.mode !== "demo")) {
+        throw new Error(payload?.error ?? "Thumbnail non aggiornata");
+      }
+      if (payload.item) replacePersistedItem(payload.item);
+      setToast(`Thumbnail aggiornata a ${formatDuration(timestampMs)}`);
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Thumbnail non aggiornata");
+      return false;
+    }
+  };
+
+  const openMediaById = (id: string) => {
+    const loaded = items.find((item) => item.id === id);
+    if (loaded) {
+      setInspected(loaded);
+      return;
+    }
+    void fetch(`/api/media/${id}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { item?: PersistedMediaRecord } | null) => {
+        if (payload?.item) setInspected(persistedToMedia(payload.item));
+      })
+      .catch(() => setToast("Media non disponibile"));
+  };
+
+  const requestDeleteMediaById = (id: string) => {
+    const loaded = items.find((item) => item.id === id);
+    if (loaded) {
+      setDeleteRequest(loaded);
+      return;
+    }
+    void fetch(`/api/media/${id}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload: { item?: PersistedMediaRecord } | null) => {
+        if (payload?.item) setDeleteRequest(persistedToMedia(payload.item));
+        else setToast("Duplicato non disponibile");
+      })
+      .catch(() => setToast("Duplicato non disponibile"));
+  };
+
+  const deleteMedia = () => {
+    if (!deleteRequest || deleteBusy) return;
+    const target = deleteRequest;
+    setDeleteBusy(true);
+    void fetch(`/api/media/${target.id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true })
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        if (!response.ok) throw new Error(payload?.error ?? "Eliminazione non riuscita");
+        setItems((current) => current.filter(({ id }) => id !== target.id));
+        setLibraryTotal((current) => Math.max(0, current - 1));
+        setInspected((current) => current?.id === target.id
+          ? null
+          : current
+            ? { ...current, duplicateCount: Math.max(0, (current.duplicateCount ?? 0) - 1) }
+            : current);
+        setDeleteRequest(null);
+        setMediaRefreshNonce((current) => current + 1);
+        setToast(`“${target.title}” eliminato dal disco`);
+      })
+      .catch((error) => setToast(error instanceof Error ? error.message : "Eliminazione non riuscita"))
+      .finally(() => setDeleteBusy(false));
+  };
+
+  const deleteSelectedMedia = async () => {
+    if (!bulkDeleteRequest?.length || bulkDeleteBusy) return;
+    const targets = bulkDeleteRequest;
+    const deletedIds = new Set<string>();
+    const failures: string[] = [];
+    setBulkDeleteBusy(true);
+    setBulkDeleteProgress(0);
+    for (const [index, target] of targets.entries()) {
+      try {
+        const response = await fetch(`/api/media/${target.id}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true })
+        });
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        if (!response.ok) throw new Error(payload?.error ?? "Eliminazione non riuscita");
+        deletedIds.add(target.id);
+      } catch (error) {
+        failures.push(`${target.title}: ${error instanceof Error ? error.message : "errore"}`);
+      }
+      setBulkDeleteProgress(index + 1);
+    }
+    if (deletedIds.size) {
+      setItems((current) => current.filter(({ id }) => !deletedIds.has(id)));
+      setLibraryTotal((current) => Math.max(0, current - deletedIds.size));
+      setInspected((current) => current && deletedIds.has(current.id) ? null : current);
+      setSelectedIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))));
+      setMediaRefreshNonce((current) => current + 1);
+    }
+    setBulkDeleteBusy(false);
+    setBulkDeleteRequest(null);
+    setToast(failures.length
+      ? `${deletedIds.size} eliminati · ${failures.length} non riusciti: ${failures[0]}`
+      : `${deletedIds.size} media eliminati dal disco`);
   };
 
   const handleUpload = (files: File[], skipped: SkippedImportFile[] = []) => {
@@ -3252,8 +3956,8 @@ export function MediaWorkspace() {
       .catch(() => undefined);
   };
 
-  const createTaxonomyEntry = (kind: "PERSON" | "TAG", name: string) => {
-    void fetch("/api/taxonomy", {
+  const createTaxonomyEntry = (kind: "PERSON" | "TAG" | "GROUP", name: string) => {
+    return fetch("/api/taxonomy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, name })
@@ -3275,17 +3979,90 @@ export function MediaWorkspace() {
             ...current.filter(({ id }) => id !== entry.id),
             entry
           ].sort((left, right) => left.name.localeCompare(right.name)));
-        } else {
+        } else if (kind === "TAG") {
           setTaxonomyTags((current) => [
             ...current.filter(({ id }) => id !== entry.id),
             entry
           ].sort((left, right) => left.name.localeCompare(right.name)));
+        } else {
+          setTaxonomyGroups((current) => [
+            ...current.filter(({ id }) => id !== entry.id),
+            { ...entry, color: entry.color ?? "#F97316" }
+          ].sort((left, right) => left.name.localeCompare(right.name)));
         }
-        setToast(`${kind === "PERSON" ? "Persona" : "Tag"} “${name}” creato`);
+        setToast(`${kind === "PERSON" ? "Performer" : kind === "GROUP" ? "Galleria" : "Tag"} “${name}” ${kind === "GROUP" ? "creata" : "creato"}`);
+        return true;
       })
       .catch((error) => {
         setToast(error instanceof Error ? error.message : "Creazione non riuscita");
+        return false;
       });
+  };
+
+  const createPerformerGallery = async (person: TaxonomyEntry, name: string) => {
+    try {
+      const response = await fetch(`/api/taxonomy/people/${person.id}/galleries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const payload = await response.json().catch(() => null) as {
+        gallery?: TaxonomyGroup;
+        error?: string;
+      } | null;
+      if (!response.ok || !payload?.gallery) {
+        throw new Error(payload?.error ?? "Galleria performer non creata");
+      }
+      setPerformerGalleries((current) => [
+        ...current.filter(({ id }) => id !== payload.gallery?.id),
+        payload.gallery as TaxonomyGroup
+      ].sort((left, right) => left.name.localeCompare(right.name, "it")));
+      setToast(`Galleria “${name}” creata per ${person.name}`);
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Galleria performer non creata");
+      return false;
+    }
+  };
+
+  const assignGalleryToPerformer = async (person: TaxonomyEntry, galleryId: string) => {
+    const source = taxonomyGroups.find(({ id }) => id === galleryId);
+    if (!source) return false;
+    try {
+      const response = await fetch(`/api/taxonomy/people/${person.id}/galleries`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ galleryId })
+      });
+      const payload = await response.json().catch(() => null) as {
+        gallery?: TaxonomyGroup;
+        assignedMedia?: number;
+        mode?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !payload?.gallery) {
+        throw new Error(payload?.error ?? "Galleria non assegnata");
+      }
+      const assigned = payload.mode === "demo"
+        ? { ...source, ownerPersonId: person.id }
+        : payload.gallery;
+      setTaxonomyGroups((current) => current.filter(({ id }) => id !== galleryId));
+      setPerformerGalleries((current) => [
+        ...current.filter(({ id }) => id !== galleryId),
+        assigned
+      ].sort((left, right) => left.name.localeCompare(right.name, "it")));
+      setItems((current) => current.map((item) =>
+        item.group === source.name && !item.people.includes(person.name)
+          ? { ...item, people: [...item.people, person.name] }
+          : item
+      ));
+      setPerformerGalleryRefresh((current) => current + 1);
+      setToast(`Galleria “${source.name}” assegnata a ${person.name} · ${payload.assignedMedia ?? source.count} media`);
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Galleria non assegnata");
+      return false;
+    }
   };
 
   const goToPage = (page: number) => {
@@ -3303,11 +4080,28 @@ export function MediaWorkspace() {
     });
   };
 
+  const openGallery = (name: string) => {
+    setAdvancedFilters({ ...emptyAdvancedFilters, groups: [name] });
+    setFilter("all");
+    setFolderFilter("");
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+    setInspected(null);
+    setActiveNav("Galleria");
+    setMobileSidebar(false);
+  };
+
   const navigate = (value: string) => {
     if (value === "Cerca") {
       setCommandOpen(true);
       return;
     }
+    if (value === "Libreria" && activeNav !== "Libreria") {
+      setHomeRandomSeed(createClientId());
+    }
+    if (activeNav === "Galleria") setAdvancedFilters(emptyAdvancedFilters);
+    setSelectedIds(new Set());
+    setInspected(null);
     setActiveNav(value);
     setMobileSidebar(false);
   };
@@ -3317,16 +4111,25 @@ export function MediaWorkspace() {
       <div className={mobileSidebar ? "sidebar-drawer is-open" : "sidebar-drawer"}>
         <Sidebar
           active={activeNav}
-          people={taxonomyPeople.map(({ name }) => name)}
+          galleries={taxonomyGroups}
+          activeGallery={activeNav === "Galleria" ? advancedFilters.groups[0] : undefined}
+          onOpenGallery={openGallery}
+          onCreateGallery={async (name) => {
+            const created = await createTaxonomyEntry("GROUP", name);
+            if (created) openGallery(name);
+            return created;
+          }}
           uncataloguedCount={uncataloguedCount}
           duplicateCount={duplicateCount}
           onNavigate={navigate}
-          onUpload={() => setUploadOpen(true)}
         />
         <button className="drawer-scrim" onClick={() => setMobileSidebar(false)} aria-label="Chiudi menu" />
       </div>
 
       <Topbar
+        editRefresh={editRefresh}
+        onOpenResult={openMediaById}
+        active={activeNav}
         onCommand={() => setCommandOpen(true)}
         onUpload={() => setUploadOpen(true)}
         onMobileMenu={() => setMobileSidebar(true)}
@@ -3335,7 +4138,7 @@ export function MediaWorkspace() {
       <main
         className={[
           "main-content",
-          ["Persone", "Tag"].includes(activeNav) ? "is-taxonomy-view" : "",
+          ["Persone", "Tag", "Gruppi"].includes(activeNav) ? "is-taxonomy-view" : "",
           view === "stories" && activeNav === "Libreria" ? "is-story-view" : ""
         ].join(" ")}
       >
@@ -3354,20 +4157,46 @@ export function MediaWorkspace() {
           <DuplicatesPanel />
         ) : (
           <>
+        {simpleHome ? (
+          <section className="simple-home-intro">
+            <div>
+              <p className="eyebrow">HOME</p>
+              <h1>Video casuali</h1>
+              <p>
+                Una selezione diversa dal tuo archivio a ogni apertura.
+                {libraryCounts.video ? ` ${libraryCounts.video.toLocaleString("it-IT")} video disponibili.` : ""}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setMediaLoading(true);
+                setCurrentPage(1);
+                setHomeRandomSeed(createClientId());
+              }}
+            >
+              <Shuffle size={17} />
+              Nuova selezione
+            </button>
+          </section>
+        ) : (
         <section className="page-intro">
           <div>
             <p className="eyebrow">
               {activeNav === "Persone" ? "CAST & PERFORMER" : "CATALOGO PRIVATO"}
             </p>
             <h1>
-              {activeNav === "Persone" ? (
+              {activeNav === "Galleria" ? (
+                <>{advancedFilters.groups[0] ?? "Galleria"}</>
+              ) : activeNav === "Persone" ? (
                 <>I tuoi <em>performer.</em></>
               ) : (
                 <>La tua collezione, <em>organizzata.</em></>
               )}
             </h1>
             <p className="page-subtitle">
-              {activeNav === "Persone"
+              {activeNav === "Galleria"
+                ? "Seleziona i media dalla libreria e usa Aggiungi alla galleria per inserirli qui."
+                : activeNav === "Persone"
                 ? `${taxonomyPeople.length.toLocaleString("it-IT")} profili con scene, immagini, tag e collezioni.`
                 : libraryCounts.all
                 ? `${libraryCounts.all.toLocaleString("it-IT")} media nel tuo archivio.`
@@ -3397,11 +4226,14 @@ export function MediaWorkspace() {
             </div>
           </div>
         </section>
+        )}
 
-        <ExternalLibraryRail scan={externalScan} onScan={startExternalScan} />
+        {externalScan?.running || externalScan?.error ? (
+          <ExternalLibraryRail scan={externalScan} onScan={startExternalScan} />
+        ) : null}
         <StatusRail items={items} />
 
-        <section className="library-toolbar">
+        <section className={`library-toolbar${simpleHome ? " is-simplified" : ""}${moreToolsOpen ? " show-more" : ""}`}>
           <div className="filter-tabs">
             {[
               { value: "all", label: "Tutti", count: libraryCounts.all },
@@ -3445,7 +4277,6 @@ export function MediaWorkspace() {
             <button
               className="highlights-launch"
               onClick={() => setHighlightsOpen(true)}
-              disabled={!visibleItems.some((item) => item.type === "video" && item.markers?.length)}
             >
               <Sparkles size={16} fill="currentColor" />
               Momenti salienti
@@ -3467,14 +4298,31 @@ export function MediaWorkspace() {
               Filtra
               {advancedFilterCount ? <span>{advancedFilterCount}</span> : null}
             </button>
-            <button
-              className="tool-button sort-button"
-              onClick={() => setSort((value) => (value === "recent" ? "name" : "recent"))}
-            >
+            {simpleHome ? (
+              <button
+                className="tool-button toolbar-more-toggle"
+                onClick={() => setMoreToolsOpen((value) => !value)}
+                aria-expanded={moreToolsOpen}
+              >
+                <SlidersHorizontal size={16} />
+                {moreToolsOpen ? "Meno" : "Altro"}
+              </button>
+            ) : null}
+            <label className="tool-button sort-button" title="Ordina l’intero catalogo">
               <ArrowDownUp size={16} />
-              {sort === "recent" ? "Più recenti" : "Nome"}
+              <select aria-label="Ordinamento media" value={sort} onChange={(event) => {
+                setMediaLoading(true);
+                setCurrentPage(1);
+                setSelectedIds(new Set());
+                setSort(event.target.value as MediaSort);
+                if (event.target.value === "random") setHomeRandomSeed(createClientId());
+              }}>
+                {mediaSortGroups.map((group) => <optgroup key={group.label} label={group.label}>
+                  {group.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </optgroup>)}
+              </select>
               <ChevronDown size={14} />
-            </button>
+            </label>
             <div className="view-switch">
               <button
                 className={view === "grid" ? "is-active" : ""}
@@ -3594,7 +4442,7 @@ export function MediaWorkspace() {
               {activeNav === "Gruppi" ? <Layers3 size={20} /> : null}
               {["Recenti", "Preferiti", "Da catalogare"].includes(activeNav) ? <Sparkles size={20} /> : null}
               <span>
-                <strong>{activeNav === "Persone" ? "Performer" : activeNav === "Gruppi" ? "Collezioni" : activeNav}</strong>
+                <strong>{activeNav === "Persone" ? "Performer" : activeNav === "Gruppi" ? "Gallerie" : activeNav === "Galleria" ? advancedFilters.groups[0] ?? "Galleria" : activeNav}</strong>
                 <small>{visibleItems.length} elementi nella vista corrente</small>
               </span>
             </div>
@@ -3606,7 +4454,14 @@ export function MediaWorkspace() {
         ) : null}
 
         {selectedPerson && activeNav === "Libreria" ? (
-          <PersonFacetTabs
+          <><PerformerHomeHeader
+            key={selectedPerson.id}
+            person={selectedPerson}
+            globalGalleries={taxonomyGroups}
+            onManageImages={() => setReferencePerson(selectedPerson)}
+            onCreateGallery={(name) => createPerformerGallery(selectedPerson, name)}
+            onAssignGallery={(galleryId) => assignGalleryToPerformer(selectedPerson, galleryId)}
+          /><PersonFacetTabs
             person={selectedPerson.name}
             facets={personFacets}
             activeTag={advancedFilters.tags[0]}
@@ -3637,7 +4492,7 @@ export function MediaWorkspace() {
                 excludeGroups: current.excludeGroups.filter((entry) => entry !== name)
               }));
             }}
-          />
+          /></>
         ) : null}
 
         {activeNav === "Persone" ? (
@@ -3647,6 +4502,7 @@ export function MediaWorkspace() {
             onCreate={(name) => createTaxonomyEntry("PERSON", name)}
             onOpen={(name) => {
               setMediaLoading(true);
+              setFilter("all");
               setAdvancedFilters((current) => ({
                 ...current,
                 people: [name],
@@ -3671,6 +4527,13 @@ export function MediaWorkspace() {
               setActiveNav("Libreria");
             }}
           />
+        ) : activeNav === "Gruppi" ? (
+          <TaxonomyManager
+            kind="groups"
+            entries={taxonomyGroups}
+            onCreate={(name) => createTaxonomyEntry("GROUP", name)}
+            onOpen={openGallery}
+          />
         ) : (
           <>
             {quickMode ? (
@@ -3682,6 +4545,10 @@ export function MediaWorkspace() {
                 </p>
                 <button onClick={() => setQuickMode(false)}>Fine</button>
               </div>
+            ) : null}
+
+            {pageCount > 1 ? (
+              <div className="pagination-top"><span>Pagina {currentPage} di {pageCount}</span><Pagination currentPage={currentPage} pageCount={pageCount} pages={paginationPages} loading={mediaLoading} onPage={goToPage} /></div>
             ) : null}
 
             {mediaLoading ? (
@@ -3709,6 +4576,7 @@ export function MediaWorkspace() {
                   <MediaCard
                     item={item}
                     selected={selectedIds.has(item.id)}
+                    selectionMode={selectedIds.size > 0}
                     quickMode={quickMode}
                     quickTags={taxonomyTags.map(({ name, color }) => ({
                       name,
@@ -3719,6 +4587,7 @@ export function MediaWorkspace() {
                     onOpenGallery={setGalleryItem}
                     onSelect={toggleSelect}
                     onFavorite={toggleFavorite}
+                    onHomeVisibility={toggleRandomHomeVisibility}
                     onQuickTag={addTag}
                     key={item.id}
                   />
@@ -3744,36 +4613,7 @@ export function MediaWorkspace() {
                   ? `${pageStart.toLocaleString("it-IT")}–${pageEnd.toLocaleString("it-IT")} di ${libraryTotal.toLocaleString("it-IT")} media`
                   : "Nessun media"}
               </span>
-              <nav className="media-pagination" aria-label="Pagine della libreria">
-                <button
-                  onClick={() => goToPage(currentPage - 1)}
-                  disabled={currentPage === 1 || mediaLoading}
-                  aria-label="Pagina precedente"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                {paginationPages.map((page, index) => (
-                  <span key={page}>
-                    {index > 0 && page - paginationPages[index - 1] > 1 ? <i>…</i> : null}
-                    <button
-                      className={page === currentPage ? "is-active" : ""}
-                      onClick={() => goToPage(page)}
-                      disabled={mediaLoading}
-                      aria-label={`Pagina ${page}`}
-                      aria-current={page === currentPage ? "page" : undefined}
-                    >
-                      {page}
-                    </button>
-                  </span>
-                ))}
-                <button
-                  onClick={() => goToPage(currentPage + 1)}
-                  disabled={currentPage === pageCount || mediaLoading}
-                  aria-label="Pagina successiva"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </nav>
+              <Pagination currentPage={currentPage} pageCount={pageCount} pages={paginationPages} loading={mediaLoading} onPage={goToPage} />
             </footer>
           </>
         )}
@@ -3789,6 +4629,9 @@ export function MediaWorkspace() {
           availableGroups={taxonomyGroups}
           onClose={() => setInspected(null)}
           onFavorite={() => toggleFavorite(inspected)}
+          onRandomHomeVisibility={() => toggleRandomHomeVisibility(inspected)}
+          onTvVisibility={() => void setTvSelection([inspected], !inspected.showOnTv)}
+          tvSaving={tvSaving}
           onAddTag={(tag) => addTag(inspected, tag)}
           onRemoveTag={(tag) => removeTag(inspected, tag)}
           onAddPerson={(name) => addPerson(inspected, name)}
@@ -3801,6 +4644,10 @@ export function MediaWorkspace() {
             item: inspected,
             initialTimeMs
           })}
+          onQuickCapture={(positionMs) => quickCapture(inspected, positionMs)}
+          onOpenDuplicate={openMediaById}
+          onDeleteDuplicate={requestDeleteMediaById}
+          onDelete={() => setDeleteRequest(inspected)}
         />
       ) : null}
 
@@ -3818,18 +4665,20 @@ export function MediaWorkspace() {
         />
       ) : null}
 
-      {selectedIds.size ? (
+      {selectedItems.length ? (
         <BulkToolbar
-          count={selectedIds.size}
+          count={selectedItems.length}
           tags={taxonomyTags}
           people={taxonomyPeople}
-          groups={taxonomyGroups}
+          groups={selectedPerson ? [...taxonomyGroups, ...performerGalleries] : taxonomyGroups}
+          selectedItems={selectedItems}
           onClear={() => setSelectedIds(new Set())}
-          onAddTag={addTagToSelection}
-          onAddPerson={addPersonToSelection}
-          onAddGroup={addGroupToSelection}
+          onApply={applyTaxonomyToSelection}
           onEdit={() => setEditorOpen(true)}
           onOrganize={() => setOrganizerOpen(true)}
+          onTvSelection={(showOnTv) => void setTvSelection(selectedItems, showOnTv)}
+          tvSaving={tvSaving}
+          onDelete={() => setBulkDeleteRequest(selectedItems)}
         />
       ) : null}
 
@@ -3886,7 +4735,7 @@ export function MediaWorkspace() {
                 : visibleItems.filter((item) => item.type === "video").slice(0, 3)
           }
           onClose={() => setEditorOpen(false)}
-          onCreated={setToast}
+          onCreated={(message) => { setToast(message); setEditRefresh((value) => value + 1); }}
         />
       ) : null}
       {organizerOpen ? (
@@ -3903,6 +4752,20 @@ export function MediaWorkspace() {
           initialTimeMs={captureRequest.initialTimeMs}
           onClose={() => setCaptureRequest(null)}
           onCaptured={addCapturedFrame}
+          onSetThumbnail={(positionMs) => setThumbnailFromFrame(captureRequest.item, positionMs)}
+          onAddMarker={(marker) => addMarker(captureRequest.item, marker)}
+        />
+      ) : null}
+      {deleteRequest ? (
+        <DeleteMediaDialog item={deleteRequest} busy={deleteBusy} onCancel={() => setDeleteRequest(null)} onConfirm={deleteMedia} />
+      ) : null}
+      {bulkDeleteRequest ? (
+        <DeleteMultipleDialog
+          items={bulkDeleteRequest}
+          busy={bulkDeleteBusy}
+          progress={bulkDeleteProgress}
+          onCancel={() => setBulkDeleteRequest(null)}
+          onConfirm={() => void deleteSelectedMedia()}
         />
       ) : null}
       {toast ? (
