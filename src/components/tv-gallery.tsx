@@ -25,7 +25,7 @@ function focus(element?: HTMLElement | null) {
 
 // Spatial navigation also works when the responsive grid changes column count.
 function moveFocus(root: HTMLElement, key: string) {
-  const candidates = Array.from(root.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]"))
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled)"))
     .filter((element) => element.getClientRects().length > 0);
   const current = document.activeElement as HTMLElement;
   if (!candidates.includes(current)) { focus(candidates[0]); return; }
@@ -48,13 +48,18 @@ function moveFocus(root: HTMLElement, key: string) {
 
 function time(seconds: number) {
   if (!Number.isFinite(seconds)) return "0:00";
-  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60) % 60;
+  return `${hours ? `${hours}:` : ""}${hours ? String(minutes).padStart(2, "0") : minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
 export function TvGallery() {
   const root = useRef<HTMLElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const viewerHistory = useRef(false);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef(false);
+  const advanceAfterLoad = useRef(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<TvItem[]>([]);
@@ -81,6 +86,7 @@ export function TvGallery() {
     if (!seed) return;
     const controller = new AbortController();
     setLoading(true);
+    loadingRef.current = true;
     setError("");
     const params = new URLSearchParams({ take: String(pageSize), page: String(page), status: "ready", tv: "true", sort: "random", seed });
     if (filter === "video" || filter === "image") params.set("kind", filter);
@@ -96,12 +102,21 @@ export function TvGallery() {
           (filter === "favorites" ? item.favorite : item.kind === (filter === "video" ? "VIDEO" : "IMAGE"))));
         if (controller.signal.aborted) return;
         setDemo(isDemo);
-        setItems(isDemo ? matching.slice((page - 1) * pageSize, page * pageSize) : payload.items ?? []);
+        const incoming = isDemo ? matching.slice((page - 1) * pageSize, page * pageSize) : payload.items ?? [];
+        setItems((current) => {
+          const combined = page === 1 ? incoming : [...current, ...incoming];
+          return [...new Map(combined.map((item) => [item.id, item])).values()];
+        });
+        if (advanceAfterLoad.current && incoming.length) setSelected((current) => current === null ? null : current + 1);
+        advanceAfterLoad.current = false;
         setTotal(isDemo ? matching.length : payload.total ?? 0);
       } catch (reason) {
-        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Caricamento non riuscito.");
+        if (!controller.signal.aborted) {
+          advanceAfterLoad.current = false;
+          setError(reason instanceof Error ? reason.message : "Caricamento non riuscito.");
+        }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) { setLoading(false); loadingRef.current = false; }
       }
     })();
     return () => controller.abort();
@@ -109,7 +124,7 @@ export function TvGallery() {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === demoTvStorageKey) { setPage(1); setRetry((value) => value + 1); }
+      if (event.key === demoTvStorageKey) { setItems([]); setTotal(0); setPage(1); setRetry((value) => value + 1); }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -152,7 +167,21 @@ export function TvGallery() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selected]);
 
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const hasMore = page * pageSize < total;
+  function loadMore(advance = false) {
+    if (loadingRef.current || !hasMore || error) return;
+    loadingRef.current = true;
+    advanceAfterLoad.current = advance;
+    setPage((current) => current + 1);
+  }
+  useEffect(() => {
+    if (loading || error || !hasMore || selected !== null || !sentinel.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !loadingRef.current) loadMore();
+    }, { rootMargin: "400px" });
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [loading, error, hasMore, selected, page]);
   return <main className="tv-gallery" ref={root}>
     <header className="tv-header">
       <div><span className="tv-brand">FRAMEO <b>TV</b></span><h1>La tua galleria</h1></div>
@@ -160,11 +189,11 @@ export function TvGallery() {
     </header>
     <nav className="tv-filters" aria-label="Filtra la galleria">
       {filters.map(({ value, label }) => <button key={value} aria-pressed={filter === value}
-        onClick={() => { setFilter(value); setPage(1); }}>{label}</button>)}
+        onClick={() => { if (value === filter) return; advanceAfterLoad.current = false; setItems([]); setTotal(0); setFilter(value); setPage(1); }}>{label}</button>)}
     </nav>
-    <div className="tv-summary" aria-live="polite">{demo ? "Modalità demo · " : ""}{loading ? "Caricamento…" : `${total} contenuti · Pagina ${page} di ${pageCount}`}</div>
-    {error ? <div className="tv-message" role="alert"><p>{error}</p><button onClick={() => setRetry((value) => value + 1)}>Riprova</button></div>
-      : loading ? <div className="tv-message" role="status">Caricamento della galleria…</div>
+    <div className="tv-summary" aria-live="polite">{demo ? "Modalità demo · " : ""}{loading ? "Caricamento…" : `${total} contenuti`}</div>
+    {!items.length && error ? <div className="tv-message" role="alert"><p>{error}</p><button onClick={() => setRetry((value) => value + 1)}>Riprova</button></div>
+      : !items.length && loading ? <div className="tv-message" role="status">Caricamento della galleria…</div>
       : !items.length ? <div className="tv-message">{filter === "all" ? "La Galleria TV è vuota. Dalla libreria sul computer, attiva “Mostra nella Galleria TV” sui contenuti che vuoi vedere qui." : "Nessun contenuto disponibile con questo filtro."}</div>
       : <section className="tv-grid" aria-label="Foto e video">
         {items.map((item, index) => <button className="tv-card" data-tv-card key={item.id}
@@ -180,13 +209,13 @@ export function TvGallery() {
           </div><strong>{item.title}</strong>
         </button>)}
       </section>}
-    <footer className="tv-pagination">
-      <button disabled={loading || page <= 1} onClick={() => setPage((value) => value - 1)}>← Pagina precedente</button>
-      <button disabled={loading || page >= pageCount} onClick={() => setPage((value) => value + 1)}>Pagina successiva →</button>
-    </footer>
+    <div ref={sentinel} className="tv-load-more" aria-live="polite">
+      {items.length && error ? <><p role="alert">{error}</p><button onClick={() => setRetry((value) => value + 1)}>Riprova caricamento</button></>
+        : items.length && loading ? "Caricamento di altri contenuti…" : items.length && !hasMore ? "Hai visto tutti i contenuti" : null}
+    </div>
     {selected !== null && items[selected] ? <TvViewer key={items[selected].id} item={items[selected]} index={selected} count={items.length}
       onClose={closeViewer} onPrevious={selected > 0 ? () => setSelected(selected - 1) : undefined}
-      onNext={selected < items.length - 1 ? () => setSelected(selected + 1) : undefined} /> : null}
+      onNext={selected < items.length - 1 ? () => setSelected(selected + 1) : hasMore ? () => loadMore(true) : undefined} /> : null}
   </main>;
 }
 
@@ -220,9 +249,28 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
   const root = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const playButton = useRef<HTMLButtonElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState("");
+  const [playing, setPlaying] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [activity, setActivity] = useState(0);
+  const [buffering, setBuffering] = useState(false);
+  const [buffered, setBuffered] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [seekFeedback, setSeekFeedback] = useState("");
+  const timeline = useRef<HTMLInputElement>(null);
+  function revealControls() { setControlsVisible(true); setActivity((value) => value + 1); }
+  useEffect(() => {
+    if (!playing || error) { setControlsVisible(true); return; }
+    const timeout = window.setTimeout(() => { focus(root.current); setControlsVisible(false); }, 3500);
+    return () => window.clearTimeout(timeout);
+  }, [playing, activity, error]);
+  useEffect(() => {
+    if (!seekFeedback) return;
+    const timeout = window.setTimeout(() => setSeekFeedback(""), 900);
+    return () => window.clearTimeout(timeout);
+  }, [seekFeedback, activity]);
+  const [fullscreen, setFullscreen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState((item.durationMs ?? 0) / 1000);
   const [source, setSource] = useState(item.streamUrl && !item.streamUrl.includes(".m3u8") ? item.streamUrl : item.originalUrl);
@@ -274,18 +322,34 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
     }
     else video.current.pause();
   }
+  function seekTo(position: number) {
+    const element = video.current;
+    if (!element || !Number.isFinite(element.duration)) return;
+    element.currentTime = Math.max(0, Math.min(element.duration, position));
+    setElapsed(element.currentTime);
+    revealControls();
+  }
   function seek(offset: number) {
-    if (video.current && Number.isFinite(video.current.duration)) {
-      video.current.currentTime = Math.max(0, Math.min(video.current.duration, video.current.currentTime + offset));
-    }
+    if (!video.current) return;
+    seekTo(video.current.currentTime + offset);
+    setSeekFeedback(`${offset > 0 ? "+" : "−"}${Math.abs(offset)} s`);
+  }
+  function toggleMute() { if (video.current) { video.current.muted = !video.current.muted; setMuted(video.current.muted); } }
+  function changeSpeed() {
+    const rates = [1, 1.25, 1.5, 2, .5];
+    const next = rates[(rates.indexOf(speed) + 1) % rates.length];
+    if (video.current) video.current.playbackRate = next;
+    setSpeed(next);
   }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const code = event.keyCode;
+      const wasHidden = !controlsVisible;
+      revealControls();
       if (["Escape", "Backspace", "BrowserBack", "GoBack"].includes(event.key) || code === 4) {
         event.preventDefault(); close();
-      } else if (isVideo && (event.key === "MediaPlayPause" || event.key === " " || code === 179)) {
+      } else if (isVideo && (event.key === "MediaPlayPause" || event.key === " " || ((wasHidden || document.activeElement === root.current) && event.key === "Enter") || code === 179)) {
         event.preventDefault(); togglePlayback();
       } else if (isVideo && (event.key === "MediaRewind" || code === 227)) {
         event.preventDefault(); seek(-10);
@@ -293,12 +357,20 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
         event.preventDefault(); seek(10);
       } else {
         const key = event.key || ({ 37: "ArrowLeft", 38: "ArrowUp", 39: "ArrowRight", 40: "ArrowDown" } as Record<number, string>)[code];
-        if (key?.startsWith("Arrow") && root.current) { event.preventDefault(); moveFocus(root.current, key); }
+        if (key?.startsWith("Arrow") && root.current) {
+          event.preventDefault();
+          if (isVideo && (wasHidden || document.activeElement === root.current || document.activeElement === timeline.current) && (key === "ArrowLeft" || key === "ArrowRight")) seek(key === "ArrowLeft" ? -10 : 10);
+          else if (wasHidden || document.activeElement === root.current) requestAnimationFrame(() => focus(timeline.current ?? playButton.current));
+          else moveFocus(root.current, key);
+        }
+        if (isVideo && document.activeElement === timeline.current && ["Home", "End"].includes(key)) {
+          event.preventDefault(); seekTo(key === "Home" ? 0 : duration);
+        }
         // Keep keyboard Tab navigation within the viewer as well.
         if (event.key === "Tab" && root.current) {
-          const buttons = Array.from(root.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
-          const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
-          event.preventDefault(); focus(buttons[(current + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length]);
+          const buttons = Array.from(root.current.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)"));
+          const current = buttons.indexOf(document.activeElement as HTMLElement);
+          event.preventDefault(); requestAnimationFrame(() => focus(buttons[(current + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length]));
         }
       }
     };
@@ -306,26 +378,44 @@ function TvViewer({ item, index, count, onClose, onPrevious, onNext }: {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  return <div className="tv-viewer" role="dialog" aria-modal="true" aria-label={item.title} ref={root}>
-    <header><div><h2>{item.title}</h2><p>{index + 1} / {count} in questa pagina{item.demo ? " · Anteprima demo" : ""}</p></div>
+  return <div className={`tv-viewer${controlsVisible ? "" : " controls-hidden"}`} role="dialog" aria-modal="true" aria-label={item.title} ref={root} tabIndex={-1}
+    onMouseMove={revealControls} onPointerDown={revealControls}>
+    <header inert={!controlsVisible}><div><h2>{item.title}</h2><p>{index + 1} / {count} contenuti caricati{item.demo ? " · Anteprima demo" : ""}</p></div>
       <button onClick={close}>Chiudi ✕</button></header>
-    <div className="tv-stage">
+    <div className="tv-stage" onClick={isVideo ? togglePlayback : undefined}>
       {isVideo ? <video key={source} ref={video} src={source} poster={item.thumbnailUrl ?? undefined} playsInline preload="metadata"
         onPlay={() => { setPlaying(true); setError(""); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
         onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
-        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onWaiting={() => setBuffering(true)} onSeeking={() => setBuffering(true)}
+        onPlaying={() => setBuffering(false)} onSeeked={() => setBuffering(false)}
+        onProgress={(event) => { const ranges = event.currentTarget.buffered; setBuffered(ranges.length ? ranges.end(ranges.length - 1) : 0); }}
+        onLoadedMetadata={(event) => { setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0); event.currentTarget.muted = muted; event.currentTarget.playbackRate = speed; }}
         onError={() => setError("Questo video non è riproducibile. Prepara il video compatibile dalla libreria sul computer e riaprilo qui.")} />
         : <img src={item.demo ? item.originalUrl : `/api/media/${item.id}/display?width=1600`} alt={item.title}
           onError={() => setError("Immagine non disponibile. Prova un altro contenuto.")} />}
+      {buffering && playing && !error ? <span className="tv-buffering" role="status" aria-label="Caricamento video" /> : null}
+      {seekFeedback ? <span className="tv-seek-feedback" aria-live="polite">{seekFeedback}</span> : null}
       {error ? <p className="tv-player-error" role="alert">{error}</p> : null}
     </div>
-    <footer className="tv-controls">
+    <footer className="tv-controls" inert={!controlsVisible} onFocus={revealControls}>
+      {isVideo ? <div className="tv-timeline">
+        <input ref={timeline} type="range" aria-label="Posizione di riproduzione" aria-valuetext={`${time(elapsed)} di ${time(duration)}`}
+          min={0} max={duration || 0} step={1} value={Math.min(elapsed, duration)} disabled={!duration}
+          style={{ background: `linear-gradient(to right, #b3a6ff ${duration ? elapsed / duration * 100 : 0}%, #727487 ${duration ? elapsed / duration * 100 : 0}%, #727487 ${duration ? buffered / duration * 100 : 0}%, #343540 ${duration ? buffered / duration * 100 : 0}%)` }}
+          onChange={(event) => seekTo(Number(event.currentTarget.value))} />
+        <div className="tv-timeline-times"><span>{time(elapsed)} / {time(duration)}</span><span>−{time(Math.max(0, duration - elapsed))}</span></div>
+      </div> : null}
+      <div className="tv-control-buttons">
       <button disabled={!onPrevious} onClick={onPrevious}>← Precedente</button>
       {isVideo ? <><button onClick={() => seek(-10)}>−10 s</button>
         <button ref={playButton} onClick={togglePlayback}>{playing ? "Pausa" : "Riproduci"}</button>
-        <button onClick={() => seek(10)}>+10 s</button><span>{time(elapsed)} / {time(duration)}</span></> : null}
+        <button onClick={() => seek(10)}>+10 s</button>
+        <button onClick={toggleMute} aria-pressed={muted}>{muted ? "Attiva audio" : "Disattiva audio"}</button>
+        <button onClick={changeSpeed} aria-label={`Velocità ${speed}×`}>{speed}×</button></> : null}
       <button onClick={() => fullscreen ? void document.exitFullscreen().catch(() => undefined) : enterFullscreen()}>{fullscreen ? "Esci da schermo intero" : "Schermo intero"}</button>
       <button disabled={!onNext} onClick={onNext}>Successivo →</button>
+      </div>
+      {isVideo ? <p className="tv-control-hint">Sulla barra: ← / → salta 10 s · OK sui comandi · Indietro chiude</p> : null}
     </footer>
   </div>;
 }

@@ -50,10 +50,17 @@ try {
   await page.getByRole("dialog").waitFor();
   await page.goBack();
   await page.getByRole("dialog").waitFor({ state: "detached" });
-  await page.getByRole("button", { name: "Pagina successiva →", exact: true }).click();
+  fail = true;
+  await page.locator(".tv-load-more").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Riprova caricamento", exact: true }).waitFor();
+  assert.equal(await page.locator("[data-tv-card]").count(), 24);
+  fail = false;
+  await page.getByRole("button", { name: "Riprova caricamento", exact: true }).click();
   await page.getByRole("button", { name: "Foto: Foto 24", exact: true }).waitFor();
-  assert.equal(await page.locator("[data-tv-card]").count(), 1);
-  assert.equal(await page.getByRole("button", { name: "Pagina successiva →", exact: true }).isDisabled(), true);
+  assert.equal(await page.locator("[data-tv-card]").count(), 25);
+  assert.equal(await page.getByRole("button", { name: /Pagina/ }).count(), 0);
+  await page.getByRole("button", { name: "Tutti", exact: true }).click();
+  assert.equal(await page.locator("[data-tv-card]").count(), 25);
   await page.getByRole("button", { name: "Video", exact: true }).click();
   await page.getByText("Nessun contenuto disponibile con questo filtro.").waitFor();
   assert.equal(queries.at(-1).get("page"), "1");
@@ -85,7 +92,15 @@ try {
     return route.fulfill({ json: { state: "ready", url: "/tv-fixture.mp4" } });
   });
   await page.route("**/unsupported.mkv", (route) => route.fulfill({ status: 404 }));
-  await page.route("**/tv-fixture.mp4", (route) => route.fulfill({ contentType: "video/mp4", body: readFileSync(fixturePath) }));
+  await page.route("**/tv-fixture.mp4", (route) => {
+    const data = readFileSync(fixturePath);
+    const range = route.request().headers().range?.match(/bytes=(\d+)-(\d*)/);
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Number(range[2]) : data.length - 1;
+    return route.fulfill({ status: range ? 206 : 200, contentType: "video/mp4",
+      headers: { "Accept-Ranges": "bytes", "Content-Length": String(end - start + 1), ...(range ? { "Content-Range": `bytes ${start}-${end}/${data.length}` } : {}) },
+      body: data.subarray(start, end + 1) });
+  });
   await page.getByRole("button", { name: "Video", exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.tv-thumbnail video')?.paused === false);
   assert.equal(await page.locator('.tv-thumbnail video').evaluate((video) => video.muted && video.loop), true);
@@ -103,13 +118,35 @@ try {
   await page.waitForFunction(() => document.querySelector("video")?.currentTime >= 10);
   await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "MediaPlayPause", keyCode: 179, bubbles: true })));
   await page.waitForFunction(() => document.querySelector("video")?.paused === true);
+  const timeline = page.getByRole("slider", { name: "Posizione di riproduzione" });
+  await timeline.focus();
+  await page.keyboard.press("Home");
+  await page.waitForFunction(() => document.querySelector(".tv-stage video")?.currentTime < .2 && !document.querySelector(".tv-stage video")?.seeking);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => document.querySelector(".tv-stage video")?.currentTime >= 10);
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForFunction(() => document.querySelector(".tv-stage video")?.currentTime < .2 && !document.querySelector(".tv-stage video")?.seeking);
+  await page.getByRole("button", { name: "−10 s", exact: true }).click();
+  assert.equal(await page.locator(".tv-stage video").evaluate(video => video.currentTime), 0);
+  await page.getByRole("button", { name: "Disattiva audio", exact: true }).click();
+  assert.equal(await page.locator(".tv-stage video").evaluate(video => video.muted), true);
+  await page.getByRole("button", { name: "Velocità 1×", exact: true }).click();
+  assert.equal(await page.locator(".tv-stage video").evaluate(video => video.playbackRate), 1.25);
+  await page.getByRole("button", { name: "Riproduci", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".tv-viewer")?.classList.contains("controls-hidden"));
+  const beforeSeek = await page.locator(".tv-stage video").evaluate(video => video.currentTime);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => !document.querySelector(".tv-viewer")?.classList.contains("controls-hidden"));
+  assert.ok(await page.locator(".tv-stage video").evaluate(video => video.currentTime) >= beforeSeek + 9);
+  await page.getByRole("button", { name: "Pausa", exact: true }).click();
+  await page.screenshot({ path: "/tmp/frameo-tv-player.png" });
   await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { keyCode: 4, bubbles: true })));
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.waitForFunction(() => document.fullscreenElement === null);
   assert.deepEqual(errors, []);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.screenshot({ path: "/tmp/frameo-tv-gallery.png" });
-  console.log("TV gallery: navigation, preview autoplay/pause, fullscreen playback/exit, MP4, seek, filters and responsive grid passed.");
+  console.log("TV gallery: continuous loading/retry, navigation, preview playback, fullscreen, timeline and remote seek, audio/speed, auto-hide, filters and responsive grid passed.");
 } finally {
   await browser.close();
   rmSync(fixtureDirectory, { recursive: true, force: true });

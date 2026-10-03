@@ -32,8 +32,8 @@ catalogare e riprodurre foto e video dal browser.
 ## Galleria su Fire TV Stick
 
 La pagina `/tv` contiene solo la galleria, con interfaccia scura, miniature grandi,
-filtri Tutti / Video / Foto / Preferiti e 24 contenuti per pagina. È disponibile
-anche dal collegamento **Galleria TV** nella barra laterale del sito.
+filtri Tutti / Video / Foto / Preferiti e caricamento continuo durante lo scorrimento.
+È disponibile anche dal collegamento **Galleria TV** nella barra laterale del sito.
 
 1. Apri Amazon Silk sulla Fire TV Stick.
 2. Usa l'indirizzo del server Frameo seguito da `/tv`, per esempio
@@ -44,9 +44,14 @@ anche dal collegamento **Galleria TV** nella barra laterale del sito.
 
 Le frecce spostano la selezione e OK apre foto e video nel visualizzatore a tutta
 pagina. Indietro chiude il visualizzatore; sono disponibili anche pulsanti grandi
-per chiudere e passare al contenuto precedente o successivo della pagina corrente.
+per chiudere e passare al contenuto precedente o successivo fra quelli caricati.
 Per i video, premi **Riproduci**: il telecomando può anche controllare play/pausa
 e avanzamento/riavvolgimento di 10 secondi quando Silk inoltra questi tasti al sito.
+La barra di avanzamento permette di scegliere la posizione: le frecce sinistra e
+destra saltano 10 secondi, anche quando i controlli sono nascosti. Il lettore
+mostra tempo trascorso, durata e tempo rimanente, audio, velocità e buffering.
+I comandi scompaiono dopo pochi secondi durante la riproduzione e tornano con
+il telecomando o il puntatore; OK a comandi nascosti alterna play e pausa.
 I pulsanti a schermo restano utilizzabili anche con il puntatore di Silk.
 
 Per scegliere cosa mostrare sulla TV, apri un contenuto nella libreria e attiva
@@ -69,8 +74,8 @@ La navigazione può essere verificata anche da computer con frecce, Invio e Esca
 Le miniature della libreria mostrano il tag **TV** sui contenuti inclusi. Nella
 barra filtri della libreria, **In TV** elenca tutti i video selezionati per la TV,
 anche senza clip di anteprima o esclusi dalla home web. La pagina `/tv` mescola
-l'ordine a ogni apertura o ricaricamento e lo mantiene stabile durante la
-navigazione fra pagine e filtri. Le anteprime verticali, quadrate e panoramiche
+l'ordine a ogni apertura o ricaricamento e lo mantiene stabile durante lo
+scorrimento e i cambi di filtro. Le anteprime verticali, quadrate e panoramiche
 sono mostrate interamente, con bande scure quando necessarie.
 Nella
 pagina TV le card sono più grandi e le clip di anteprima disponibili si riproducono
