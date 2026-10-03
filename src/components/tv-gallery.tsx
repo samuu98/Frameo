@@ -64,12 +64,25 @@ export function TvGallery() {
   const [retry, setRetry] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [demo, setDemo] = useState(false);
+  const [seed, setSeed] = useState("");
+  const [demoOrder, setDemoOrder] = useState(demoItems);
 
   useEffect(() => {
+    setSeed(window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const shuffled = [...demoItems];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const other = Math.floor(Math.random() * (index + 1));
+      [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+    }
+    setDemoOrder(shuffled);
+  }, []);
+
+  useEffect(() => {
+    if (!seed) return;
     const controller = new AbortController();
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ take: String(pageSize), page: String(page), status: "ready", tv: "true" });
+    const params = new URLSearchParams({ take: String(pageSize), page: String(page), status: "ready", tv: "true", sort: "random", seed });
     if (filter === "video" || filter === "image") params.set("kind", filter);
     if (filter === "favorites") params.set("favorite", "true");
     void (async () => {
@@ -79,7 +92,7 @@ export function TvGallery() {
         const payload = await response.json() as { items?: TvItem[]; total?: number; mode?: string };
         const isDemo = payload.mode === "demo";
         const demoSelection = isDemo ? readDemoTvSelection() : new Set<string>();
-        const matching = demoItems.filter((item) => demoSelection.has(item.id) && (filter === "all" ||
+        const matching = demoOrder.filter((item) => demoSelection.has(item.id) && (filter === "all" ||
           (filter === "favorites" ? item.favorite : item.kind === (filter === "video" ? "VIDEO" : "IMAGE"))));
         if (controller.signal.aborted) return;
         setDemo(isDemo);
@@ -92,7 +105,7 @@ export function TvGallery() {
       }
     })();
     return () => controller.abort();
-  }, [filter, page, retry]);
+  }, [filter, page, retry, seed, demoOrder]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {

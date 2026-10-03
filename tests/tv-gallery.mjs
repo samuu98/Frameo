@@ -19,6 +19,8 @@ try {
     const params = new URL(route.request().url()).searchParams;
     queries.push(params);
     assert.equal(params.get("tv"), "true");
+    assert.equal(params.get("sort"), "random");
+    assert.ok(params.get("seed"));
     if (fail) return route.fulfill({ status: 503, json: { error: "Unavailable" } });
     const offset = (Number(params.get("page")) - 1) * 24;
     const empty = params.get("kind") === "video";
@@ -31,6 +33,7 @@ try {
   await page.goto(`${process.env.FRAMEO_TEST_URL ?? "http://localhost:3102"}/tv`);
   await page.locator("[data-tv-card]").first().waitFor();
   assert.equal(await page.locator("[data-tv-card]").count(), 24);
+  const firstSeed = queries.at(-1).get("seed");
   await page.locator("[data-tv-card]").first().focus();
   await page.keyboard.press("ArrowRight");
   assert.equal(await page.locator(":focus").getAttribute("aria-label"), "Foto: Foto 1");
@@ -62,13 +65,17 @@ try {
   await page.getByRole("button", { name: "Riprova", exact: true }).click();
   await page.locator("[data-tv-card]").first().waitFor();
   assert.equal(queries.at(-1).get("favorite"), "true");
+  assert.ok(queries.every((query) => query.get("seed") === firstSeed));
+  await page.reload();
+  await page.locator("[data-tv-card]").first().waitFor();
+  assert.notEqual(queries.at(-1).get("seed"), firstSeed);
   await page.setViewportSize({ width: 800, height: 600 });
   await page.locator("[data-tv-card]").first().focus();
   await page.keyboard.press("ArrowDown");
   assert.equal(await page.locator(":focus").getAttribute("aria-label"), "Foto: Foto 2");
   // Exercise actual playback and seek with a small local H.264/AAC fixture.
   const fixturePath = path.join(fixtureDirectory, "video.mp4");
-  execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=10", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "20", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", fixturePath]);
+  execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=90x160:r=10", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "20", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", fixturePath]);
   await page.route("**/api/media?*", (route) => route.fulfill({ json: { total: 1, items: [{
     id: "video-test", title: "Video test", kind: "VIDEO", thumbnailUrl: "/demo/coast.svg",
     previewUrl: "/tv-fixture.mp4", originalUrl: "/unsupported.mkv", streamUrl: "/playlist.m3u8", favorite: false, durationMs: 20000
@@ -82,6 +89,9 @@ try {
   await page.getByRole("button", { name: "Video", exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.tv-thumbnail video')?.paused === false);
   assert.equal(await page.locator('.tv-thumbnail video').evaluate((video) => video.muted && video.loop), true);
+  assert.equal(await page.locator('.tv-thumbnail video').evaluate((video) => getComputedStyle(video).objectFit), 'contain');
+  assert.equal(await page.locator('.tv-thumbnail img').evaluate((image) => getComputedStyle(image).objectFit), 'contain');
+  assert.equal(await page.locator('.tv-thumbnail video').evaluate((video) => video.videoWidth / video.videoHeight), 90 / 160);
   await page.getByRole("button", { name: "Video: Video test", exact: true }).click();
   assert.equal(await page.locator('.tv-thumbnail video').count(), 0);
   await page.waitForFunction(() => document.querySelector("video")?.readyState >= 2);

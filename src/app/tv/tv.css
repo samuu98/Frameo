@@ -14,9 +14,9 @@
 .tv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
 .tv-gallery .tv-card { padding: 0; overflow: hidden; text-align: left; min-width: 0; }
 .tv-thumbnail { aspect-ratio: 16 / 9; position: relative; background: #1b1e29; }
-.tv-thumbnail img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.tv-preview { width: 100%; height: 100%; }
-.tv-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.tv-thumbnail img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.tv-preview { position: absolute; inset: 0; width: 100%; height: 100%; background: #090b10; overflow: hidden; }
+.tv-thumbnail video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #090b10; pointer-events: none; }
 .tv-badge { position: absolute; bottom: 12px; left: 12px; background: #11131ae6; border-radius: 6px; padding: 6px 10px; font-size: .7em; }
 .tv-card strong { display: block; padding: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9em; }
 .tv-placeholder { display: grid; height: 100%; place-items: center; font-size: 2em; color: #b3b9cb; }

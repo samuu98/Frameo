@@ -58,6 +58,22 @@ try {
   assert.equal(await page.locator('.media-card .media-tv-badge').count(), 0);
   await tvPage.getByText("La Galleria TV è vuota.", { exact: false }).waitFor();
   assert.equal(await tvPage.locator("[data-tv-card]").count(), 0);
+  const filterPage = await context.newPage();
+  await filterPage.addInitScript(() => localStorage.setItem('frameo-demo-tv-selection', JSON.stringify(['coastline-drive', 'stillness'])));
+  const filterQueries = [];
+  await filterPage.route('**/api/media?*', (route) => {
+    filterQueries.push(new URL(route.request().url()).searchParams);
+    return route.fulfill({ json: { items: [], mode: 'demo' } });
+  });
+  await filterPage.goto(process.env.FRAMEO_TEST_URL ?? 'http://localhost:3102');
+  await filterPage.locator('.media-card').first().waitFor();
+  await filterPage.getByRole('button', {name: /^In TV/}).click();
+  await filterPage.waitForFunction(() => document.querySelectorAll('.media-card').length === 1);
+  assert.equal(filterQueries.at(-1).get('tv'), 'true');
+  assert.equal(filterQueries.at(-1).get('kind'), 'video');
+  assert.equal(filterQueries.at(-1).has('randomVideos'), false);
+  assert.equal(filterQueries.at(-1).has('performerHome'), false);
+  assert.equal(await filterPage.locator('.media-card .media-tv-badge').count(), 1);
   assert.deepEqual(errors, []);
   console.log("TV selection UI: individual/bulk selection, failed saves, mobile controls and demo persistence/sync/filtering passed.");
 } finally { await browser.close(); }

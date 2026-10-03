@@ -2806,7 +2806,7 @@ function DeleteMultipleDialog({ items, busy, progress, onCancel, onConfirm }: {
 
 export function MediaWorkspace() {
   const [activeNav, setActiveNav] = useState("Libreria");
-  const [filter, setFilter] = useState<"all" | MediaType>("all");
+  const [filter, setFilter] = useState<"all" | "tv" | MediaType>("all");
   const [sort, setSort] = useState<MediaSort>("smart");
   const [view, setView] = useState<"grid" | "compact" | "stories">("grid");
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -2870,7 +2870,7 @@ export function MediaWorkspace() {
     activeNav === "Libreria" &&
     !advancedFilters.groups.length &&
     !advancedFilters.tags.length &&
-    filter !== "image"
+    filter !== "image" && filter !== "tv"
   );
 
   const mediaQuery = useMemo(() => {
@@ -2887,7 +2887,8 @@ export function MediaWorkspace() {
     } else if (activeNav === "Libreria" && sort === "smart") {
       params.set("discover", "true");
     }
-    if (filter !== "all") params.set("kind", filter);
+    if (filter === "tv") { params.set("kind", "video"); params.set("tv", "true"); }
+    else if (filter !== "all") params.set("kind", filter);
     if (performerHome && selectedPerson) {
       params.set("kind", "video");
       params.set("performerHome", selectedPerson.id);
@@ -2925,7 +2926,9 @@ export function MediaWorkspace() {
   }, [activeNav, advancedFilters, filter, folderFilter, homeRandomSeed, performerHome, selectedPerson, sort]);
 
   const visibleItems = useMemo(() => {
-    let result = performerHome
+    let result = filter === "tv"
+      ? items.filter((item) => item.type === "video" && item.showOnTv)
+      : performerHome
       ? items.filter((item) => item.type === "video")
       : filter === "all"
         ? [...items]
@@ -4240,7 +4243,8 @@ export function MediaWorkspace() {
             {[
               { value: "all", label: "Tutti", count: libraryCounts.all },
               { value: "image", label: "Foto", count: imageCount },
-              { value: "video", label: "Video", count: videoCount }
+              { value: "video", label: "Video", count: videoCount },
+              { value: "tv", label: "In TV", count: filter === "tv" ? libraryTotal : undefined }
             ].map((entry) => (
               <button
                 className={filter === entry.value ? "is-active" : ""}
@@ -4251,7 +4255,7 @@ export function MediaWorkspace() {
                 }}
               >
                 {entry.label}
-                <span>{entry.count.toLocaleString("it-IT")}</span>
+                {entry.count !== undefined ? <span>{entry.count.toLocaleString("it-IT")}</span> : null}
               </button>
             ))}
           </div>

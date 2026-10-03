@@ -67,6 +67,12 @@ nel browser usato per sceglierla, senza sincronizzazione con altri dispositivi.
 
 La navigazione può essere verificata anche da computer con frecce, Invio e Escape.
 Le miniature della libreria mostrano il tag **TV** sui contenuti inclusi. Nella
+barra filtri della libreria, **In TV** elenca tutti i video selezionati per la TV,
+anche senza clip di anteprima o esclusi dalla home web. La pagina `/tv` mescola
+l'ordine a ogni apertura o ricaricamento e lo mantiene stabile durante la
+navigazione fra pagine e filtri. Le anteprime verticali, quadrate e panoramiche
+sono mostrate interamente, con bande scure quando necessarie.
+Nella
 pagina TV le card sono più grandi e le clip di anteprima disponibili si riproducono
 automaticamente senza audio, solo mentre sono visibili; si fermano quando apri
 un contenuto. Avviando un video, il lettore richiede lo schermo intero. Puoi anche
